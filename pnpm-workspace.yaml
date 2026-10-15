@@ -1,0 +1,4 @@
+packages:
+  - 'dist/npm/*'
+
+linkWorkspacePackages: true
