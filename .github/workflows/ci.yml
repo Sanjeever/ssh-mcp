@@ -98,6 +98,10 @@ jobs:
       - run: pnpm install --frozen-lockfile --offline --ignore-scripts
       - run: node scripts/build.mjs build all
       - run: pnpm pack:check
+      - name: 安装发布归档工具
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes zip unzip
       - name: 制作并检查七个 npm 包、六个归档与 SHA256SUMS
         run: node scripts/release.mjs prepare
       - run: node scripts/release.mjs verify
