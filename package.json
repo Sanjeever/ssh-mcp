@@ -1,6 +1,6 @@
 {
   "name": "@sanjeever/ssh-mcp",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "通过 stdio MCP 管理多台 SSH 服务器，执行命令并传输文件",
   "license": "MIT",
   "repository": {
@@ -33,11 +33,11 @@
     "version:check": "node scripts/version.mjs check"
   },
   "optionalDependencies": {
-    "@sanjeever/ssh-mcp-darwin-arm64": "0.1.0",
-    "@sanjeever/ssh-mcp-darwin-x64": "0.1.0",
-    "@sanjeever/ssh-mcp-linux-arm64": "0.1.0",
-    "@sanjeever/ssh-mcp-linux-x64": "0.1.0",
-    "@sanjeever/ssh-mcp-win32-arm64": "0.1.0",
-    "@sanjeever/ssh-mcp-win32-x64": "0.1.0"
+    "@sanjeever/ssh-mcp-darwin-arm64": "0.1.1",
+    "@sanjeever/ssh-mcp-darwin-x64": "0.1.1",
+    "@sanjeever/ssh-mcp-linux-arm64": "0.1.1",
+    "@sanjeever/ssh-mcp-linux-x64": "0.1.1",
+    "@sanjeever/ssh-mcp-win32-arm64": "0.1.1",
+    "@sanjeever/ssh-mcp-win32-x64": "0.1.1"
   }
 }

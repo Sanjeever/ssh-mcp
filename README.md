@@ -13,7 +13,7 @@
   "mcpServers": {
     "ssh": {
       "command": "npx",
-      "args": ["-y", "@sanjeever/ssh-mcp@0.1.0"],
+      "args": ["-y", "@sanjeever/ssh-mcp@0.1.1"],
       "env": {
         "SSH_MCP_SERVER_DEV_HOST": "192.0.2.10",
         "SSH_MCP_SERVER_DEV_USERNAME": "deploy",
@@ -122,7 +122,7 @@ node scripts/version.mjs check v0.1.1
 
 ```sh
 node scripts/build.mjs build all
-node scripts/release.mjs prepare v0.1.0
+node scripts/release.mjs prepare v0.1.1
 node scripts/release.mjs verify
 ```
 
