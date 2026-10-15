@@ -1,0 +1,67 @@
+name: 标签发布
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: 核对正式标签与 main 历史
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '26'
+          package-manager-cache: false
+      - name: 核对版本与更新日志
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: node scripts/version.mjs check "$RELEASE_TAG"
+      - name: 确认标签提交已进入 main
+        run: git merge-base --is-ancestor HEAD origin/main
+
+  verify:
+    needs: validate
+    uses: ./.github/workflows/ci.yml
+
+  publish:
+    name: OIDC 发布七个 npm 包并公开 Release
+    needs: [validate, verify]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '26'
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+      - name: 固定支持 OIDC 的 npm CLI
+        run: npm install --global npm@11.20.0
+      - uses: actions/download-artifact@v8
+        with:
+          name: release-assets
+          path: dist
+      - name: 核对构建产物
+        run: node scripts/release.mjs verify
+      - name: 创建或恢复 draft，按平台包到入口包的顺序发布，全部成功后公开
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: node scripts/release.mjs publish "$RELEASE_TAG"

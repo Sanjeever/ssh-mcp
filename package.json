@@ -15,7 +15,7 @@
   "publishConfig": { "access": "public" },
   "packageManager": "pnpm@11.20.0",
   "scripts": {
-    "test": "node --test bin/*.test.cjs scripts/*.test.mjs",
+    "test": "node --test bin/ssh-mcp.test.cjs scripts/version.test.mjs scripts/release.test.mjs",
     "metadata": "node scripts/build.mjs metadata",
     "build": "node scripts/build.mjs build",
     "pack:check": "node scripts/pack-check.mjs",
