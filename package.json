@@ -9,10 +9,20 @@
   },
   "homepage": "https://github.com/Sanjeever/ssh-mcp#readme",
   "bugs": "https://github.com/Sanjeever/ssh-mcp/issues",
-  "bin": { "ssh-mcp": "bin/ssh-mcp.cjs" },
-  "files": ["bin/ssh-mcp.cjs", "LICENSE", "README.md"],
-  "engines": { "node": ">=22" },
-  "publishConfig": { "access": "public" },
+  "bin": {
+    "ssh-mcp": "bin/ssh-mcp.cjs"
+  },
+  "files": [
+    "bin/ssh-mcp.cjs",
+    "LICENSE",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "packageManager": "pnpm@11.20.0",
   "scripts": {
     "test": "node --test bin/ssh-mcp.test.cjs scripts/version.test.mjs scripts/release.test.mjs",
