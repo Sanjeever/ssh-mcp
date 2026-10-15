@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -33,6 +34,26 @@ func TestGroupingDefaultsAndPaths(t *testing.T) {
 	p, err := ResolvePath("$SSH_MCP_TEST_LITERAL/file")
 	if err != nil || !strings.Contains(p, "$SSH_MCP_TEST_LITERAL") {
 		t.Fatal("不应展开环境变量")
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, value := range []string{"~/file", "~"} {
+		got, err := ResolvePath(value)
+		want := home
+		if value != "~" {
+			want = filepath.Join(home, "file")
+		}
+		if err != nil || got != want {
+			t.Fatal("主目录展开失败", value, got, err)
+		}
+	}
+	if runtime.GOOS == "windows" {
+		got, err := ResolvePath(`~\file`)
+		if err != nil || got != filepath.Join(home, "file") {
+			t.Fatal("Windows 主目录展开失败", got, err)
+		}
 	}
 }
 

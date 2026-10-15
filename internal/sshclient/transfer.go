@@ -73,7 +73,7 @@ func (c *Client) Upload(ctx context.Context, local, remote string, overwrite boo
 	}
 	target, err := files.OpenFile(remote, flags)
 	if err != nil {
-		return 0, c.transferError(ctx, "无法创建远端文件；默认禁止覆盖，父目录必须存在")
+		return 0, c.transferError(ctx, "无法创建或打开远端文件；默认禁止覆盖，父目录必须存在；连接中断时远端可能已创建或截断文件")
 	}
 	count, copyErr := copyLimited(target, source, MaxTransferBytes)
 	closeErr := target.Close()

@@ -26,7 +26,7 @@ func testDial(t *testing.T, s *testssh.Server) *Client {
 }
 func TestExecOutputExitStatusAndDrain(t *testing.T) {
 	s := testssh.Start(t)
-	for _, command := range []string{"ok", "fail", "missing", "large", "invalid"} {
+	for _, command := range []string{"ok", "fail", "missing", "signal", "large", "invalid"} {
 		t.Run(command, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
@@ -43,6 +43,10 @@ func TestExecOutputExitStatusAndDrain(t *testing.T) {
 			case "missing":
 				if ErrorCode(err) != "ssh_exec_unknown" || result.ExitCode != nil || result.Stdout == "" {
 					t.Fatalf("%+v %v", result, err)
+				}
+			case "signal":
+				if ErrorCode(err) != "ssh_exit_signal" || result.ExitCode != nil {
+					t.Fatalf("信号不能伪造退出码：%+v %v", result, err)
 				}
 			case "large":
 				if err != nil || !result.OutputTruncated || len(result.Stdout)+len(result.Stderr) > MaxOutputBytes || !utf8.ValidString(result.Stdout) || result.ExitCode == nil {

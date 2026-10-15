@@ -146,6 +146,13 @@ func Start(t testing.TB) *Server {
 								case "missing":
 									io.WriteString(stream, "partial\n")
 									return
+								case "signal":
+									stream.SendRequest("exit-signal", false, ssh.Marshal(struct {
+										Signal            string
+										CoreDumped        bool
+										Message, Language string
+									}{Signal: "TERM"}))
+									return
 								case "fail":
 									io.WriteString(stream, "partial output\n")
 									io.WriteString(stream.Stderr(), "failure detail\n")

@@ -56,6 +56,7 @@ func startProcess(t *testing.T, binary string, s *testssh.Server) *process {
 	t.Cleanup(cancel)
 	cmd := exec.CommandContext(ctx, binary)
 	cmd.Env = append(cleanEnv(), "SSH_MCP_SERVER_TEST_HOST="+s.Host, "SSH_MCP_SERVER_TEST_PORT="+fmtInt(s.Port), "SSH_MCP_SERVER_TEST_USERNAME=operator", "SSH_MCP_SERVER_TEST_PASSWORD= secret ", "SSH_MCP_KNOWN_HOSTS="+filepath.Join(t.TempDir(), "known_hosts"))
+	cmd.Env = append(cmd.Env, "SSH_MCP_SERVER_Z_HOST=192.0.2.2", "SSH_MCP_SERVER_Z_USERNAME=test", "SSH_MCP_SERVER_Z_PASSWORD=测试密码", "SSH_MCP_SERVER_A_HOST=192.0.2.1", "SSH_MCP_SERVER_A_USERNAME=test", "SSH_MCP_SERVER_A_PASSWORD=测试密码")
 	stderr := new(bytes.Buffer)
 	cmd.Stderr = stderr
 	stdin, err := cmd.StdinPipe()
@@ -129,20 +130,24 @@ func TestStdioToolsAndSchemas(t *testing.T) {
 	if list.IsError || s.AuthCount.Load() != 0 {
 		t.Fatal("列出服务器触发联网")
 	}
+	servers := object(t, list.StructuredContent)["servers"].([]any)
+	if len(servers) != 3 || servers[0].(map[string]any)["server_id"] != "a" || servers[1].(map[string]any)["server_id"] != "test" || servers[2].(map[string]any)["server_id"] != "z" {
+		t.Fatal("列表未稳定排序", servers)
+	}
 	raw, _ := json.Marshal(list)
 	if strings.Contains(string(raw), " secret ") || strings.Contains(string(raw), "private_key_path") {
 		t.Fatal("凭据泄露")
 	}
-	for _, command := range []string{"ok", "fail", "missing", "large"} {
+	for _, command := range []string{"ok", "fail", "missing", "signal", "large"} {
 		res := call(t, p, "ssh_exec", map[string]any{"server_id": "test", "command": command})
 		obj := object(t, res.StructuredContent)
 		if err := schemas["ssh_exec"].Validate(obj); err != nil {
 			t.Fatal("输出 Schema 不匹配", err, obj)
 		}
-		if res.IsError != (command == "fail" || command == "missing") {
+		if res.IsError != (command == "fail" || command == "missing" || command == "signal") {
 			t.Fatal(command, res)
 		}
-		if command == "missing" && obj["exit_code"] != nil {
+		if (command == "missing" || command == "signal") && obj["exit_code"] != nil {
 			t.Fatal("伪造退出码")
 		}
 		if len(res.Content) == 0 {

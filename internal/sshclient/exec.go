@@ -88,6 +88,10 @@ func (c *Client) Exec(ctx context.Context, command string) (ExecResult, error) {
 		return result, nil
 	}
 	var exit *ssh.ExitError
+	if errors.As(err, &exit) && exit.Signal() != "" {
+		// SSH 库可能由信号推导 128+signal，不能将推导值当作远端报告的退出码。
+		return result, failure("ssh_exit_signal", "远端命令因信号结束，无法确认数值退出码，请检查远端状态")
+	}
 	if errors.As(err, &exit) && exit.ExitStatus() >= 0 {
 		code := exit.ExitStatus()
 		result.ExitCode = &code
