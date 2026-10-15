@@ -78,6 +78,9 @@ func (c *Client) Upload(ctx context.Context, local, remote string, overwrite boo
 	count, copyErr := copyLimited(target, source, MaxTransferBytes)
 	closeErr := target.Close()
 	sourceErr := source.Close()
+	if ctx.Err() == nil && ErrorCode(copyErr) == "ssh_transfer_limit" {
+		return count, failure("ssh_transfer_limit", "上传源在传输中超过 128 MiB 上限，远端可能遗留部分文件")
+	}
 	if ctx.Err() != nil || copyErr != nil || closeErr != nil || sourceErr != nil {
 		return count, c.transferError(ctx, "SFTP 上传未完成，远端可能遗留部分文件，请检查后再操作")
 	}
@@ -138,6 +141,9 @@ func (c *Client) Download(ctx context.Context, remote, local string, overwrite b
 	sourceErr := source.Close()
 	syncErr := target.Sync()
 	closeErr := target.Close()
+	if ctx.Err() == nil && ErrorCode(copyErr) == "ssh_transfer_limit" {
+		return count, failure("ssh_transfer_limit", "下载源在传输中超过 128 MiB 上限，原目标文件未替换")
+	}
 	if ctx.Err() != nil || copyErr != nil || sourceErr != nil || syncErr != nil || closeErr != nil {
 		return count, c.transferError(ctx, "SFTP 下载未完成，原目标文件未替换")
 	}

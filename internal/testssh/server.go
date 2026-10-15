@@ -25,6 +25,7 @@ type Server struct {
 	Key                            ssh.PublicKey
 	AuthCount                      atomic.Int64
 	HangSFTP, HangSession          atomic.Bool
+	CutSFTP                        atomic.Bool
 }
 
 func Start(t testing.TB) *Server {
@@ -122,7 +123,11 @@ func Start(t testing.TB) *Server {
 									<-done
 									return
 								}
-								files, err := sftp.NewServer(stream, sftp.WithServerWorkingDirectory(s.Root))
+								var transport io.ReadWriteCloser = stream
+								if s.CutSFTP.Load() {
+									transport = &cutStream{ReadWriteCloser: stream, remaining: 64 * 1024}
+								}
+								files, err := sftp.NewServer(transport, sftp.WithServerWorkingDirectory(s.Root))
 								if err != nil {
 									return
 								}
@@ -179,4 +184,21 @@ func Start(t testing.TB) *Server {
 		wg.Wait()
 	})
 	return s
+}
+
+// 在真实 SFTP 数据流中切断响应，覆盖部分下载后的失败清理行为。
+type cutStream struct {
+	io.ReadWriteCloser
+	remaining int
+}
+
+func (s *cutStream) Write(data []byte) (int, error) {
+	if len(data) > s.remaining {
+		n, _ := s.ReadWriteCloser.Write(data[:s.remaining])
+		s.ReadWriteCloser.Close()
+		return n, io.ErrUnexpectedEOF
+	}
+	n, err := s.ReadWriteCloser.Write(data)
+	s.remaining -= n
+	return n, err
 }

@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 	"unicode/utf8"
@@ -224,6 +225,70 @@ func TestSFTPCancellationPreservesTarget(t *testing.T) {
 		matches, _ := filepath.Glob(filepath.Join(filepath.Dir(target), ".ssh-download-*"))
 		if len(matches) != 0 {
 			t.Fatal("临时文件未清理")
+		}
+	}
+}
+
+func TestPartialDownloadFailurePreservesOriginal(t *testing.T) {
+	s := testssh.Start(t)
+	c := testDial(t, s)
+	if err := os.WriteFile(filepath.Join(s.Root, "payload"), bytes.Repeat([]byte("x"), 1024*1024), 0600); err != nil {
+		t.Fatal(err)
+	}
+	s.CutSFTP.Store(true)
+	target := filepath.Join(t.TempDir(), "target")
+	if err := os.WriteFile(target, []byte("原目标"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	n, err := c.Download(ctx, remoteFile(s, "payload"), target, true)
+	if err == nil || n == 0 {
+		t.Fatalf("未覆盖部分下载后的失败：bytes=%d err=%v", n, err)
+	}
+	actual, err := os.ReadFile(target)
+	if err != nil || string(actual) != "原目标" {
+		t.Fatal("原目标损坏", err)
+	}
+	matches, err := filepath.Glob(filepath.Join(filepath.Dir(target), ".ssh-download-*"))
+	if err != nil || len(matches) != 0 {
+		t.Fatal("临时文件未清理", matches, err)
+	}
+}
+
+func TestConcurrentTransfersDoNotOverwriteByDefault(t *testing.T) {
+	s := testssh.Start(t)
+	local := filepath.Join(t.TempDir(), "source")
+	if err := os.WriteFile(local, bytes.Repeat([]byte("内容"), 10000), 0600); err != nil {
+		t.Fatal(err)
+	}
+	remote := remoteFile(s, "payload")
+	target := filepath.Join(t.TempDir(), "target")
+	for _, upload := range []bool{true, false} {
+		clients := []*Client{testDial(t, s), testDial(t, s)}
+		results := make(chan error, 2)
+		var wg sync.WaitGroup
+		for _, c := range clients {
+			wg.Go(func() {
+				var err error
+				if upload {
+					_, err = c.Upload(context.Background(), local, remote, false)
+				} else {
+					_, err = c.Download(context.Background(), remote, target, false)
+				}
+				results <- err
+			})
+		}
+		wg.Wait()
+		close(results)
+		successes := 0
+		for err := range results {
+			if err == nil {
+				successes++
+			}
+		}
+		if successes != 1 {
+			t.Fatalf("默认禁止覆盖时成功次数应为 1，实际 %d", successes)
 		}
 	}
 }
