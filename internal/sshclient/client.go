@@ -65,36 +65,28 @@ func Dial(ctx context.Context, server config.Server, knownHosts, policy string) 
 		return nil, failure("ssh_connect_failed", "SSH TCP 连接失败，请检查网络、地址和端口")
 	}
 	stop := context.AfterFunc(ctx, func() { _ = connection.Close() })
-	deadline, _ := handshakeCtx.Deadline()
-	if err := connection.SetDeadline(deadline); err != nil {
-		stop()
-		connection.Close()
-		return nil, failure("ssh_connect_failed", "无法设置 SSH 握手期限")
-	}
+	// 由同一个 context 触发关闭和错误分类，避免 socket 截止时间先于
+	// context 定时器生效时，将调用超时误判为 15 秒握手超时。
+	stopHandshake := context.AfterFunc(handshakeCtx, func() { _ = connection.Close() })
 	conn, channels, requests, err := ssh.NewClientConn(connection, address, &ssh.ClientConfig{User: server.Username, Auth: []ssh.AuthMethod{auth}, HostKeyCallback: hostKeyCallback(knownHosts, policy)})
-	if err != nil {
+	stopHandshake()
+	if err != nil || handshakeCtx.Err() != nil {
 		stop()
 		connection.Close()
 		if ctx.Err() != nil {
 			return nil, interrupted(ctx)
 		}
+		if handshakeCtx.Err() != nil {
+			return nil, failure("ssh_handshake_timeout", "SSH 连接或认证握手超过 15 秒")
+		}
 		var typed *Error
 		if errors.As(err, &typed) {
 			return nil, typed
-		}
-		var netErr net.Error
-		if errors.As(err, &netErr) && netErr.Timeout() {
-			return nil, failure("ssh_handshake_timeout", "SSH 连接或认证握手超过 15 秒")
 		}
 		if strings.Contains(err.Error(), "unable to authenticate") {
 			return nil, failure("ssh_auth_failed", "SSH 认证失败，请检查服务器账号和凭据")
 		}
 		return nil, failure("ssh_handshake_failed", "SSH 握手失败，请检查服务器 SSH 配置")
-	}
-	if err := connection.SetDeadline(time.Time{}); err != nil {
-		stop()
-		conn.Close()
-		return nil, failure("ssh_connect_failed", "无法清除 SSH 握手期限")
 	}
 	return &Client{Client: ssh.NewClient(conn, channels, requests), stop: stop}, nil
 }

@@ -161,6 +161,15 @@ func TestKnownHostsSymlinkAndWriteFailure(t *testing.T) {
 }
 
 func TestHandshakeCancellation(t *testing.T) {
+	testHandshakeDeadline(t, 100*time.Millisecond, "ssh_timeout")
+}
+
+func TestHandshakeTimeout(t *testing.T) {
+	testHandshakeDeadline(t, HandshakeTimeout+5*time.Second, "ssh_handshake_timeout")
+}
+
+func testHandshakeDeadline(t *testing.T, timeout time.Duration, wantCode string) {
+	t.Helper()
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -180,10 +189,10 @@ func TestHandshakeCancellation(t *testing.T) {
 			}
 		}
 	}()
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	cfg := config.Server{Host: "127.0.0.1", Port: listener.Addr().(*net.TCPAddr).Port, Username: "operator", Password: " secret "}
-	if _, err := Dial(ctx, cfg, trustPath(t), "accept_new"); ErrorCode(err) != "ssh_timeout" {
+	if _, err := Dial(ctx, cfg, trustPath(t), "accept_new"); ErrorCode(err) != wantCode {
 		t.Fatal(err)
 	}
 	select {
