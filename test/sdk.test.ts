@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { z } from 'zod';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { startSSH } from './helpers/ssh-server.js';
@@ -29,6 +30,11 @@ test('官方 SDK 客户端校验四工具的成功与失败输出 Schema', async
     const result = await client.callTool({ name, arguments: args }); assert.equal(result.isError, false);
     const duplicate = await client.callTool({ name, arguments: args }); assert.equal(failureOutput.parse(duplicate.structuredContent).error.code, 'ssh_target_exists');
   }
+  const read = await client.callTool({ name: 'ssh_read_file', arguments: { server_id: 'test', remote_path: '/payload' } });
+  const file = z.object({ content: z.string(), revision: z.string() }).parse(read.structuredContent);
+  assert.equal(read.isError, false); assert.equal(file.content, 'SDK 文件');
+  const edit = await client.callTool({ name: 'ssh_edit_file', arguments: { server_id: 'test', remote_path: '/payload', old_text: 'SDK', new_text: '新版', expected_revision: file.revision } });
+  assert.equal(failureOutput.parse(edit.structuredContent).error.code, 'ssh_transfer_failed');
   await client.close();
 });
 test('单文件入口支持普通及加密私钥与 ChaCha20 内嵌 WASM', async t => {

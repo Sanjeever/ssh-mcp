@@ -11,7 +11,7 @@ export { copyLimited, MAX_TRANSFER_BYTES } from './copy.js';
 import type { CopyOptions } from './copy.js';
 
 export interface TransferResult { bytes_transferred: number; publication_state?: 'not_published' | 'unknown' | 'published'; temporary_path?: string; cleanup_pending?: boolean }
-export interface TransferOptions extends Omit<CopyOptions, 'onFailure'> { atomic?: boolean }
+export interface TransferOptions extends Omit<CopyOptions, 'onFailure'> { atomic?: boolean; beforePublish?: () => Promise<void> }
 const failed = (message: string) => new SSHError('ssh_transfer_failed', message);
 const invalid = () => new SSHError('ssh_transfer_invalid', '传输源必须是可访问的单个普通文件，目标不能是目录或符号链接，源文件不能超过 128 MiB');
 export function validatePaths(local: string, remote: string) {
@@ -105,6 +105,8 @@ export async function transfer(connection: Connection, direction: 'upload' | 'do
     await file!.close(); file = undefined;
     if (connection.signal.aborted) throw interrupted(connection.signal);
     if (atomic) {
+      await options.beforePublish?.();
+      if (connection.signal.aborted) throw interrupted(connection.signal);
       context.phase = 'publish'; result.publication_state = 'unknown';
       try {
         await wait<void>(done => {

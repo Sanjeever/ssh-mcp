@@ -66,6 +66,8 @@ Agent 认证设置 `SSH_MCP_SERVER_<ID>_AGENT_SOCKET`，并省略密码、私钥
 | `ssh_output` | `output_id`，可选 `stream`、`offset`、`max_bytes` | 输出页、`next_offset`、可读取量与实际接收量、保存截断和完成状态 |
 | `ssh_upload` | `server_id`、`local_path`、`remote_path`，可选 `overwrite`、`atomic`、`timeout_seconds` | 路径、字节数、时长；原子模式增加发布与清理状态 |
 | `ssh_download` | `server_id`、`local_path`、`remote_path`，可选 `overwrite`、`timeout_seconds` | 路径、字节数、时长 |
+| `ssh_read_file` | `server_id`、`remote_path`，可选 `start_line`、`line_count`、`timeout_seconds` | 文本页、行范围、`next_line`、文件大小与 `revision` |
+| `ssh_edit_file` | `server_id`、`remote_path`、`old_text`、`new_text`、`expected_revision`，可选 `timeout_seconds` | 替换数量、新旧版本、传输字节及原子发布状态 |
 
 参数使用 snake_case，拒绝未知字段。`ssh_list` 不联网探测，不表示在线状态。远端调用总超时默认 180 秒，范围 1–3600 秒；每跳连接与认证握手另有 15 秒上限，并受总超时约束。目标跳的 15 秒包含转发通道建立与目标认证。每次远端调用使用独立连接或单跳连接链，结束、取消或会话关闭时释放整条链。
 
@@ -104,6 +106,14 @@ stdout 最多保存 96 KiB，stderr 最多保存 32 KiB，分别排空和统计�
 上传可设置 `atomic=true`，默认 `false`。原子模式先写远端同目录临时文件，再发布到目标；覆盖要求 `posix-rename@openssh.com` 扩展，禁止覆盖要求 `hardlink@openssh.com` 扩展。不支持时明确失败，不切换到直接写入。新文件采用 0600，覆盖保留普通 POSIX 权限位和 uid/gid，无法设置时在发布前失败。ACL、扩展属性与硬链接关系不保留；原子可见性不承诺断电持久性。
 
 原子上传返回 `publication_state`，取值为 `not_published`、`unknown` 或 `published`。发布请求发出但结果丢失时为 `unknown`，须检查远端；发布成功后清理失败，结果仍为 `published` 并返回错误。`cleanup_pending=true` 和 `temporary_path` 指出可能残留的临时文件。清理受调用超时约束，不自动重连。
+
+### 文本读取与编辑
+
+`ssh_read_file` 经 SFTP 读取单个普通 UTF-8 文件，拒绝目录、符号链接、无效编码和 NUL。文件最大 1 MiB，持续限制实际读取量。默认从第 1 行读取 200 行，`line_count` 范围 1–1000，每页正文最多 96 KiB，保留 CRLF 与末尾换行。页边界落在完整行之间；使用 `next_line` 继续，`null` 表示末尾。单行超过预算返回 `ssh_text_limit`。空文件为 0 行。
+
+读取返回整个文件内容的 SHA256 `revision`。`ssh_edit_file` 必须提供该值，以及非空 `old_text` 和不同的 `new_text`；新文本可以为空。旧文本须精确出现一次，重叠匹配也视为歧义，否则返回 `ssh_text_match`。内容版本不符返回 `ssh_text_conflict`，编辑前后文件均受 1 MiB 限制。
+
+编辑使用权限受限的本地临时目录暂存新内容，经已有原子上传路径发布，要求远端 POSIX rename 扩展，保留普通 POSIX 权限位与 uid/gid。发布前再次读取并核对内容版本，失败保留旧目标并报告发布及清理状态。版本检查与 rename 之间仍有外部写入窗口，不保证原子比较交换；需要严格互斥时，调用方须与远端写入者协调锁。符号链接、ACL 和扩展属性边界同原子上传。
 
 ### 结果、错误与取消
 

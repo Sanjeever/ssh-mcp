@@ -38,6 +38,12 @@ test('独立 OpenSSH：主机信任、stdin、退出状态和原子上传', { sk
   const mcpUpload = await p.request('tools/call', { name: 'ssh_upload', arguments: { server_id: 'test', local_path: source, remote_path: join(s.root, 'mcp-atomic'), atomic: true } }).result;
   assert.equal(mcpUpload.isError, false); assert.equal(mcpUpload.structuredContent?.publication_state, 'published'); assert.equal(mcpUpload.structuredContent?.cleanup_pending, false);
   assert.equal(readFileSync(join(s.root, 'mcp-atomic'), 'utf8'), '新配置');
+  const textPath = join(s.root, 'text-config'); writeFileSync(textPath, 'name=old\r\n备注=中文\r\n'); chmodSync(textPath, 0o640);
+  const textRead = await p.request('tools/call', { name: 'ssh_read_file', arguments: { server_id: 'test', remote_path: textPath, line_count: 1 } }).result;
+  assert.equal(textRead.isError, false); assert.equal(textRead.structuredContent?.content, 'name=old\r\n');
+  const edited = await p.request('tools/call', { name: 'ssh_edit_file', arguments: { server_id: 'test', remote_path: textPath, old_text: 'name=old', new_text: 'name=new', expected_revision: textRead.structuredContent?.revision } }).result;
+  assert.equal(edited.isError, false); assert.equal(edited.structuredContent?.publication_state, 'published'); assert.equal(edited.structuredContent?.replacements, 1);
+  assert.equal(readFileSync(textPath, 'utf8'), 'name=new\r\n备注=中文\r\n'); assert.equal(statSync(textPath).mode & 0o777, 0o640);
   p.child.stdin.end(); await p.closed;
   const upload = async (overwrite: boolean) => {
     const connection = await connect(), result: TransferResult = { bytes_transferred: 0 };
