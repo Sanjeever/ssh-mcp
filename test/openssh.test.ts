@@ -14,7 +14,7 @@ test('独立 OpenSSH：主机信任、stdin、退出状态和原子上传', { sk
   const config = { servers: new Map([[s.config.id, s.config]]), knownHosts: join(s.root, 'known_hosts'), hostKeyPolicy: 'accept_new' as const };
   const connect = () => dial(s.config, config, new AbortController().signal);
   const endpoint = await startOpenSSHAgent(t, s.root, s.config.privateKeyPath!);
-  const agentConnection = await dial({ ...s.config, privateKeyPath: undefined, agentSocket: endpoint }, config, new AbortController().signal);
+  const agentConnection = await dial({ ...s.config, privateKeyPath: undefined, agentSocket: endpoint }, config, new AbortController().signal).catch(error => { t.diagnostic(s.diagnostics()); throw error; });
   agentConnection.close();
   const c = await connect(), output = createExecResult();
   try { await exec(c, 'cat', output, undefined, { stdin: '独立服务端\n' }); } finally { c.close(); }

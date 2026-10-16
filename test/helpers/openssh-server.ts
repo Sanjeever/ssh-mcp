@@ -24,7 +24,9 @@ export async function startOpenSSH(t: { after: (fn: () => void | Promise<void>) 
   await new Promise<void>((resolve, reject) => listener.close(error => error ? reject(error) : resolve()));
   const username = userInfo().username;
   const configPath = join(root, 'sshd_config');
-  writeFileSync(configPath, [`Port ${address.port}`, 'ListenAddress 127.0.0.1', `HostKey "${hostKeyPath}"`, `PidFile "${join(root, 'sshd.pid')}"`, `AuthorizedKeysFile "${join(root, 'authorized_keys')}"`, `AllowUsers ${username}`, 'StrictModes no', 'PasswordAuthentication no', 'KbdInteractiveAuthentication no', 'UsePAM no', 'PermitRootLogin yes', 'AllowTcpForwarding yes', 'Subsystem sftp internal-sftp', 'LogLevel ERROR'].join('\n') + '\n');
+  // Linux runner 的密码可能被锁定，使用 PAM 账户检查支持公钥认证，不修改宿主账户。
+  const pam = process.platform === 'linux' ? 'UsePAM yes' : 'UsePAM no';
+  writeFileSync(configPath, [`Port ${address.port}`, 'ListenAddress 127.0.0.1', `HostKey "${hostKeyPath}"`, `PidFile "${join(root, 'sshd.pid')}"`, `AuthorizedKeysFile "${join(root, 'authorized_keys')}"`, `AllowUsers ${username}`, 'StrictModes no', 'PasswordAuthentication no', 'KbdInteractiveAuthentication no', pam, 'PermitRootLogin yes', 'AllowTcpForwarding yes', 'Subsystem sftp internal-sftp', 'LogLevel VERBOSE'].join('\n') + '\n');
   const useSudo = process.env.SSH_MCP_TEST_SSHD_SUDO === '1';
   const child = spawn(useSudo ? 'sudo' : '/usr/sbin/sshd', useSudo ? ['-n', '/usr/sbin/sshd', '-D', '-e', '-f', configPath] : ['-D', '-e', '-f', configPath], { stdio: ['ignore', 'ignore', 'pipe'] });
   let diagnostics = '';
