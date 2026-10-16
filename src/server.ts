@@ -12,6 +12,7 @@ import { OutputStore } from './output-store.js';
 import { probe } from './ssh/probe.js';
 import { readText, textLines, editText, validateRemotePath, MAX_TEXT_BYTES } from './ssh/text.js';
 import { TaskStore } from './tasks.js';
+import { OperationScheduler } from './scheduler.js';
 
 const selection = {
   server_id: z.string().regex(/^[a-z][a-z0-9_]*$/).describe('ssh_list 返回的精确 server_id，不自动选择目标'),
@@ -58,7 +59,8 @@ const respond = (data: Record<string, unknown>, isError = false) => ({ isError, 
 
 export function createServer(config: Config, version: string, root: AbortSignal) {
   const outputs = new OutputStore();
-  const tasks = new TaskStore(config, outputs, root);
+  const scheduler = new OperationScheduler(config.concurrency);
+  const tasks = new TaskStore(config, outputs, root, scheduler);
   root.addEventListener('abort', () => outputs.clear(), { once: true });
   const server = new Server({ name: 'ssh-mcp', version }, { capabilities: { tools: {} } });
   server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: definitions.map(d => ({ name: d.name, description: d.description, annotations: { readOnlyHint: ['ssh_list', 'ssh_output', 'ssh_read_file', 'ssh_probe', 'ssh_task_status'].includes(d.name), destructiveHint: !['ssh_list', 'ssh_output', 'ssh_read_file', 'ssh_probe', 'ssh_task_status'].includes(d.name), idempotentHint: ['ssh_list', 'ssh_output', 'ssh_read_file', 'ssh_probe', 'ssh_task_status', 'ssh_task_cancel'].includes(d.name), openWorldHint: !['ssh_list', 'ssh_output', 'ssh_task_status'].includes(d.name) }, inputSchema: z.toJSONSchema(d.input, { io: 'input' }), outputSchema: { type: 'object' as const, anyOf: [z.toJSONSchema(d.output), z.toJSONSchema(validationOutput)] } })) }));
@@ -98,12 +100,15 @@ export function createServer(config: Config, version: string, root: AbortSignal)
     const context: OperationContext = { phase: 'validation', operation_state: 'not_started' };
     let error: Record<string, unknown> | undefined;
     let outputId: string | undefined;
+    let release: (() => void) | undefined;
     try {
       if ('local_path' in input) validatePaths(input.local_path, input.remote_path);
       else if ('remote_path' in input) validateRemotePath(input.remote_path);
       const target = config.servers.get(input.server_id);
       if (!target) throw new SSHError('ssh_server_unknown', '未知 server_id，请使用 ssh_list 返回的精确 ID');
       if ('save_output' in input && input.save_output) outputId = outputs.create();
+      context.phase = 'queue';
+      release = await scheduler.acquire(target.jumpServerId ? [target.id, target.jumpServerId] : [target.id], op.signal);
       context.phase = 'connect';
       const connection = await dial(target, config, op.signal, op.deadline);
       try {
@@ -118,7 +123,7 @@ export function createServer(config: Config, version: string, root: AbortSignal)
       } finally { connection.close(); }
     } catch (failure) {
       error = operationError(failure, context);
-    } finally { op.dispose(); if (outputId) outputs.finish(outputId); }
+    } finally { release?.(); op.dispose(); if (outputId) outputs.finish(outputId); }
     const result = { server_id: input.server_id, duration_ms: Math.floor(performance.now() - start), ...('local_path' in input ? { local_path: input.local_path, remote_path: input.remote_path, ...progress } : 'command' in input ? execution : 'remote_path' in input ? { remote_path: input.remote_path, ...(input.kind === 'edit' ? progress : {}), ...textResult } : capabilities) };
     return respond({ ...result, ...(outputId ? { output_id: outputId } : {}), ...(error ? { error } : {}) }, !!error);
   });

@@ -6,6 +6,7 @@ import { OutputStore, OUTPUT_TTL_MS, MAX_SAVED_OUTPUTS } from './output-store.js
 import { dial } from './ssh/client.js';
 import { exec, createExecResult } from './ssh/exec.js';
 import type { ExecOptions } from './ssh/exec.js';
+import { OperationScheduler } from './scheduler.js';
 
 type TaskStatus = 'queued' | 'running' | 'completed' | 'failed' | 'canceled';
 interface Task {
@@ -25,7 +26,7 @@ export interface TaskInput extends ExecOptions { server_id: string; command: str
 // 任务归属当前 stdio 会话；原始启动请求结束后，通过专用工具观察和取消。
 export class TaskStore {
   private entries = new Map<string, Task>();
-  constructor(private config: Config, private outputs: OutputStore, private root: AbortSignal, private now = () => Date.now()) {
+  constructor(private config: Config, private outputs: OutputStore, private root: AbortSignal, private scheduler = new OperationScheduler(config.concurrency), private now = () => Date.now()) {
     root.addEventListener('abort', () => this.entries.clear(), { once: true });
   }
   start(input: TaskInput) {
@@ -34,7 +35,7 @@ export class TaskStore {
     if (!this.config.servers.has(input.server_id)) throw new SSHError('ssh_server_unknown', '未知 server_id，请使用 ssh_list 返回的精确 ID', { operation_state: 'not_started' });
     if (this.entries.size >= MAX_SAVED_OUTPUTS) throw new SSHError('ssh_task_limit', '会话已保留 8 个任务，请等待已结束任务过期', { operation_state: 'not_started' });
     const outputId = this.outputs.create();
-    const task: Task = { id: randomUUID(), serverId: input.server_id, outputId, status: 'queued', context: { phase: 'connect', operation_state: 'not_started' }, controller: new AbortController(), startedAt: new Date(this.now()).toISOString(), cancelRequested: false };
+    const task: Task = { id: randomUUID(), serverId: input.server_id, outputId, status: 'queued', context: { phase: 'queue', operation_state: 'not_started' }, controller: new AbortController(), startedAt: new Date(this.now()).toISOString(), cancelRequested: false };
     this.entries.set(task.id, task);
     void this.run(task, input);
     return this.snapshot(task);
@@ -61,13 +62,17 @@ export class TaskStore {
     const start = performance.now(), op = operationSignal(AbortSignal.any([this.root, task.controller.signal]), input.timeout_seconds);
     const execution = createExecResult();
     let error: ReturnType<typeof operationError> | undefined;
+    let release: (() => void) | undefined;
     try {
+      const target = this.config.servers.get(input.server_id)!;
+      release = await this.scheduler.acquire(target.jumpServerId ? [target.id, target.jumpServerId] : [target.id], op.signal);
       task.status = 'running';
-      const connection = await dial(this.config.servers.get(input.server_id)!, this.config, op.signal, op.deadline);
+      task.context.phase = 'connect';
+      const connection = await dial(target, this.config, op.signal, op.deadline);
       try { await exec(connection, input.command, execution, task.context, { ...input, onOutput: (stream, data) => this.outputs.append(task.outputId, stream, data) }); }
       finally { connection.close(); }
     } catch (failure) { error = operationError(failure, task.context); task.context = { phase: error.phase, operation_state: error.operation_state }; }
-    finally { op.dispose(); this.outputs.finish(task.outputId); }
+    finally { release?.(); op.dispose(); this.outputs.finish(task.outputId); }
     task.result = { server_id: task.serverId, output_id: task.outputId, duration_ms: Math.floor(performance.now() - start), ...execution, ...(error ? { error } : {}) };
     task.status = error?.code === 'ssh_canceled' ? 'canceled' : error ? 'failed' : 'completed';
     task.expires = this.now() + OUTPUT_TTL_MS;

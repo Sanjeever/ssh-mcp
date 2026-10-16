@@ -7,6 +7,7 @@ import { execSession } from './helpers/exec-session.js';
 import { startCLI } from './helpers/stdio.js';
 import { TaskStore } from '../src/tasks.js';
 import { OutputStore, OUTPUT_TTL_MS } from '../src/output-store.js';
+import { OperationScheduler } from '../src/scheduler.js';
 
 test('异步命令及时返回，运行中读取输出，结果保留退出失败与取消语义', async t => {
   const s = await startSSH(t, { session: execSession });
@@ -52,7 +53,7 @@ test('异步任务总超时、过期与会话边界', async t => {
   let now = Date.now();
   const root = new AbortController(), outputs = new OutputStore(() => now);
   const config = { servers: new Map([[s.config.id, s.config]]), knownHosts: join(s.root, 'known_hosts'), hostKeyPolicy: 'accept_new' as const };
-  const tasks = new TaskStore(config, outputs, root.signal, () => now);
+  const tasks = new TaskStore(config, outputs, root.signal, new OperationScheduler(), () => now);
   const task = tasks.start({ server_id: 'test', command: 'hang', timeout_seconds: 1 });
   for (let attempt = 0; !tasks.get(task.task_id).result && attempt < 100; attempt++) await delay(20);
   const final = tasks.get(task.task_id);

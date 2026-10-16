@@ -2,6 +2,8 @@ import { statSync } from 'node:fs';
 import { isIP } from 'node:net';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { DEFAULT_CONCURRENCY } from './scheduler.js';
+import type { Concurrency } from './scheduler.js';
 
 export interface ServerConfig {
   id: string;
@@ -19,6 +21,7 @@ export interface Config {
   servers: ReadonlyMap<string, Readonly<ServerConfig>>;
   hostKeyPolicy: 'accept_new' | 'strict';
   knownHosts: string;
+  concurrency?: Concurrency;
 }
 
 export function resolvePath(value: string): string {
@@ -45,6 +48,13 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const policy = env.SSH_MCP_HOST_KEY_POLICY ?? 'accept_new';
   if (policy !== 'accept_new' && policy !== 'strict') throw new Error('SSH_MCP_HOST_KEY_POLICY 必须为 accept_new 或 strict');
   const knownHosts = resolvePath(env.SSH_MCP_KNOWN_HOSTS ?? '~/.ssh/known_hosts');
+  const limit = (name: string, fallback: number, minimum: number, maximum: number) => {
+    const value = env[name];
+    if (value === undefined) return fallback;
+    if (!/^\d+$/.test(value) || Number(value) < minimum || Number(value) > maximum) throw new Error(`${name} 须为 ${minimum}–${maximum} 的整数`);
+    return Number(value);
+  };
+  const concurrency = Object.freeze({ global: limit('SSH_MCP_MAX_CONCURRENT', DEFAULT_CONCURRENCY.global, 1, 32), perServer: limit('SSH_MCP_MAX_CONCURRENT_PER_SERVER', DEFAULT_CONCURRENCY.perServer, 1, 32), queue: limit('SSH_MCP_MAX_QUEUE', DEFAULT_CONCURRENCY.queue, 0, 256) });
   if (!groups.size) throw new Error('至少需要配置一台 SSH 服务器');
   const servers = new Map<string, Readonly<ServerConfig>>();
   for (const id of [...groups.keys()].sort()) {
@@ -82,5 +92,5 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     const jump = servers.get(server.jumpServerId);
     if (!jump || jump.id === server.id || jump.jumpServerId) throw new Error(`服务器 ${server.id} 的跳板引用不存在、自引用或包含嵌套跳转，仅支持单跳`);
   }
-  return Object.freeze({ servers, hostKeyPolicy: policy, knownHosts });
+  return Object.freeze({ servers, hostKeyPolicy: policy, knownHosts, concurrency });
 }

@@ -41,3 +41,11 @@ test('非法配置拒绝启动且不泄露凭据', () => {
   for (const port of ['0', '65536', '1.5', ' 22', '']) assert.throws(() => loadConfig({ ...base, SSH_MCP_SERVER_PROD_DB_PORT: port }));
   assert.throws(() => loadConfig({}), /至少/);
 });
+
+test('调用并发和排队容量有界，非法限额拒绝启动', () => {
+  assert.deepEqual(loadConfig(base).concurrency, { global: 4, perServer: 2, queue: 32 });
+  assert.deepEqual(loadConfig({ ...base, SSH_MCP_MAX_CONCURRENT: '8', SSH_MCP_MAX_CONCURRENT_PER_SERVER: '3', SSH_MCP_MAX_QUEUE: '0' }).concurrency, { global: 8, perServer: 3, queue: 0 });
+  for (const [name, values] of Object.entries({ SSH_MCP_MAX_CONCURRENT: ['0', '33', '1.5', 'secret'], SSH_MCP_MAX_CONCURRENT_PER_SERVER: ['0', '33', '-1'], SSH_MCP_MAX_QUEUE: ['-1', '257', ''] })) {
+    for (const value of values) assert.throws(() => loadConfig({ ...base, [name]: value }), error => error instanceof Error && !error.message.includes('secret'));
+  }
+});
