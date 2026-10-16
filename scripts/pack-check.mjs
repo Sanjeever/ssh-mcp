@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync, symlinkSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -35,6 +35,10 @@ export async function checkPack(tarball) {
       const installed = join(install, 'node_modules/@sanjeever/ssh-mcp');
       const meta = JSON.parse(readFileSync(join(installed, 'package.json')));
       assert.equal(meta.version, pkg.version); assert.equal(meta.optionalDependencies, undefined); assert.equal(meta.bin['ssh-mcp'], 'dist/cli.js');
+      assert.equal(meta.dependencies, undefined);
+      assert.deepEqual(readdirSync(join(installed, 'dist')).sort(), ['THIRD_PARTY_NOTICES.txt', 'cli.js']);
+      const installedLock = JSON.parse(readFileSync(join(install, 'node_modules/.package-lock.json')));
+      assert.deepEqual(Object.keys(installedLock.packages), ['node_modules/@sanjeever/ssh-mcp']);
       const version = npm(['exec', '--offline', '--cache', cache, '--', 'ssh-mcp', '--version'], { cwd: install, env, stdio: ['ignore', 'pipe', 'pipe'] });
       assert.equal(version.stdout.toString().trim(), pkg.version);
       const source = join(install, 'source'), target = join(install, 'target'); writeFileSync(source, '隔离安装 SFTP 往返');

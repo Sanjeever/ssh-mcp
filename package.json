@@ -14,7 +14,8 @@
     "ssh-mcp": "dist/cli.js"
   },
   "files": [
-    "dist/**/*.js",
+    "dist/cli.js",
+    "dist/THIRD_PARTY_NOTICES.txt",
     "LICENSE",
     "README.md"
   ],
@@ -27,20 +28,19 @@
   "packageManager": "pnpm@11.20.0",
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "node --test test/*.test.mjs scripts/*.test.mjs",
+    "test": "tsc && node --test test/*.test.mjs scripts/*.test.mjs",
     "build": "node scripts/build.mjs",
     "pack:check": "node scripts/pack-check.mjs",
     "bump": "node scripts/version.mjs bump",
     "version:check": "node scripts/version.mjs check"
   },
-  "dependencies": {
-    "@modelcontextprotocol/sdk": "1.32.1",
-    "ssh2": "1.17.0",
-    "zod": "4.6.7"
-  },
   "devDependencies": {
+    "@modelcontextprotocol/sdk": "1.32.1",
     "@types/node": "22.20.5",
     "@types/ssh2": "1.15.6",
-    "typescript": "7.0.2"
+    "esbuild": "0.28.2",
+    "ssh2": "1.17.0",
+    "typescript": "7.0.2",
+    "zod": "4.6.7"
   }
 }

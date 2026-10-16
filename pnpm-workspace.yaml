@@ -1,4 +1,5 @@
 # 单包安装策略；ssh2 的可选原生加速不参与开发与构建。
 allowBuilds:
+  esbuild: false
   ssh2: false
   cpu-features: false

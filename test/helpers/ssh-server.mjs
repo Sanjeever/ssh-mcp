@@ -14,7 +14,7 @@ export async function startSSH(t, options = {}) {
   const key = utils.parseKey(privateKey), publicKey = key.getPublicSSH();
   const clients = new Set();
   let authCount = 0;
-  const server = new Server({ hostKeys: [privateKey] }, client => {
+  const server = new Server({ hostKeys: [privateKey], algorithms: options.algorithms }, client => {
     client.setNoDelay(true);
     clients.add(client); client.on('error', () => {}); client.once('close', () => clients.delete(client));
     client.on('authentication', ctx => {

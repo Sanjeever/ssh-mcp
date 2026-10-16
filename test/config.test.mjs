@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir, homedir } from 'node:os';
 import { join } from 'node:path';
-import { loadConfig, resolvePath } from '../dist/config.js';
+import { loadConfig, resolvePath } from '../.build/test/config.js';
 
 const base = { SSH_MCP_SERVER_PROD_DB_HOST: '::1', SSH_MCP_SERVER_PROD_DB_USERNAME: 'deploy', SSH_MCP_SERVER_PROD_DB_PASSWORD: ' secret = ' };
 test('分组、默认值、主目录和凭据空白', t => {

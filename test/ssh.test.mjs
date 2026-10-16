@@ -5,9 +5,9 @@ import { once } from 'node:events';
 import { writeFileSync, readFileSync, statSync, lstatSync, symlinkSync, chmodSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { createHmac } from 'node:crypto';
-import { dial } from '../dist/ssh/client.js';
-import { verifyHost, checkTrust, hostToken } from '../dist/ssh/known-hosts.js';
-import { operationSignal } from '../dist/errors.js';
+import { dial } from '../.build/test/ssh/client.js';
+import { verifyHost, checkTrust, hostToken } from '../.build/test/ssh/known-hosts.js';
+import { operationSignal } from '../.build/test/errors.js';
 import { startSSH } from './helpers/ssh-server.mjs';
 
 const cfg = (s, policy = 'accept_new') => ({ knownHosts: join(s.root, '.ssh', 'known_hosts'), hostKeyPolicy: policy });

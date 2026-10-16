@@ -30,3 +30,21 @@ test('官方 SDK 客户端校验四工具的成功与失败输出 Schema', async
   }
   await client.close();
 });
+test('单文件入口支持普通及加密私钥与 ChaCha20 内嵌 WASM', async t => {
+  for (const mode of ['key', 'encrypted', 'chacha']) {
+    const s = await startSSH(t, { session: execSession, algorithms: mode === 'chacha' ? { cipher: ['chacha20-poly1305@openssh.com'] } : undefined });
+    const keyPath = join(s.root, 'private_key');
+    writeFileSync(keyPath, mode === 'encrypted' ? s.encryptedKey : s.privateKey, { mode: 0o600 });
+    const env = Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith('SSH_MCP_')));
+    Object.assign(env, { SSH_MCP_SERVER_TEST_HOST: s.config.host, SSH_MCP_SERVER_TEST_PORT: String(s.config.port), SSH_MCP_SERVER_TEST_USERNAME: s.config.username, SSH_MCP_SERVER_TEST_PRIVATE_KEY_PATH: keyPath, SSH_MCP_KNOWN_HOSTS: join(s.root, 'known_hosts') });
+    if (mode === 'encrypted') env.SSH_MCP_SERVER_TEST_PASSPHRASE = ' pass ';
+    const transport = new StdioClientTransport({ command: process.execPath, args: ['dist/cli.js'], env, stderr: 'pipe' });
+    const client = new Client({ name: 'bundle-auth', version: '1' }); t.after(() => client.close());
+    await client.connect(transport);
+    const result = await client.callTool({ name: 'ssh_exec', arguments: { server_id: 'test', command: mode === 'chacha' ? 'large' : 'ok' } });
+    assert.equal(result.isError, false); assert.equal(result.structuredContent.exit_code, 0);
+    if (mode === 'chacha') assert.equal(result.structuredContent.output_truncated, true);
+    else assert.equal(result.structuredContent.stdout, 'remote ok\n');
+    await client.close();
+  }
+});
