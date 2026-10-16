@@ -10,6 +10,7 @@ import { pack } from './pack.js';
 import { startSSH } from '../test/helpers/ssh-server.js';
 import { execSession } from '../test/helpers/exec-session.js';
 import { sftpSession } from '../test/helpers/sftp-session.js';
+import { startAgent } from '../test/helpers/agent.js';
 
 export async function checkPack(tarball?: string) {
   const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
@@ -17,6 +18,8 @@ export async function checkPack(tarball?: string) {
   const cleanup: Array<() => void | Promise<void>> = [];
   try {
     const ssh = await startSSH({ after: fn => { cleanup.push(fn); } }, { session: session => { execSession(session); sftpSession(ssh.root)(session); } });
+    const agent = await startAgent({ after: fn => { cleanup.push(fn); } }, ssh.root, ssh.privateKey);
+    const gateway = await startSSH({ after: fn => { cleanup.push(fn); } }, { forward: true });
     const entry = tarball ? { path: resolve(tarball), info: undefined } : pack(root, join(temp, 'tarballs'));
     const cache = join(temp, 'cache');
     const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('SSH_MCP_') && !key.toLowerCase().startsWith('npm_config_')));
@@ -46,12 +49,15 @@ export async function checkPack(tarball?: string) {
       const remote = `/payload-${index}`;
       const calls = [
         { name: 'ssh_exec', arguments: { server_id: 'smoke', command: 'ok' } },
+        { name: 'ssh_exec', arguments: { server_id: 'smoke', command: 'stdin', stdin: '安装包标准输入\n' } },
         { name: 'ssh_upload', arguments: { server_id: 'smoke', local_path: source, remote_path: remote } },
         { name: 'ssh_download', arguments: { server_id: 'smoke', local_path: target, remote_path: remote } },
       ];
       assert.equal(await smoke(process.execPath, [join(installed, 'dist/cli.js')], env, install, calls), pkg.version);
       assert.equal(readFileSync(target, 'utf8'), readFileSync(source, 'utf8'));
-      console.log(`已验证 ${process.platform}-${process.arch} 隔离安装 ${index === 0 ? '正常安装' : flags.join(' ')}、CLI、初始化与四工具实际调用`);
+      const agentEnv = { ...env, SSH_MCP_SERVER_SMOKE_PASSWORD: undefined, SSH_MCP_SERVER_SMOKE_AGENT_SOCKET: agent.endpoint, SSH_MCP_SERVER_SMOKE_JUMP_SERVER_ID: 'gateway', SSH_MCP_SERVER_GATEWAY_HOST: gateway.config.host, SSH_MCP_SERVER_GATEWAY_PORT: String(gateway.config.port), SSH_MCP_SERVER_GATEWAY_USERNAME: gateway.config.username, SSH_MCP_SERVER_GATEWAY_PASSWORD: gateway.config.password };
+      assert.equal(await smoke(process.execPath, [join(installed, 'dist/cli.js')], agentEnv, install, [calls[0]!, calls[1]!]), pkg.version);
+      console.log(`已验证 ${process.platform}-${process.arch} 隔离安装 ${index === 0 ? '正常安装' : flags.join(' ')}、CLI、四工具、标准输入、Agent 与跳板机`);
     }
     return entry.info;
   } finally { for (const close of cleanup) await close(); rmSync(temp, { recursive: true, force: true }); }

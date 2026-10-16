@@ -46,10 +46,10 @@ export async function smoke(command: string, args: string[], env: NodeJS.Process
         assert.equal(ListToolsResultSchema.parse(responses.get(2)).tools.length, 4);
         const list = CallToolResultSchema.parse(responses.get(3));
         assert.equal(list.isError ?? false, false);
-        assert.equal(serversOutput.parse(list.structuredContent).servers[0]?.server_id, 'smoke');
+        assert(serversOutput.parse(list.structuredContent).servers.some(server => server.server_id === 'smoke'));
         for (const [index, call] of calls.entries()) {
           const response = CallToolResultSchema.parse(responses.get(index + 4)); assert.equal(response.isError, false);
-          if (call.name === 'ssh_exec') { const output = executionOutput.parse(response.structuredContent); assert.equal(output.exit_code, 0); assert.equal(output.stdout, 'remote ok\n'); }
+          if (call.name === 'ssh_exec') { const output = executionOutput.parse(response.structuredContent); assert.equal(output.exit_code, 0); assert.equal(output.stdout, call.arguments?.command === 'stdin' ? call.arguments.stdin : 'remote ok\n'); }
           else assert(transferOutput.parse(response.structuredContent).bytes_transferred > 0);
         }
         resolve(InitializeResultSchema.parse(responses.get(1)).serverInfo.version);
