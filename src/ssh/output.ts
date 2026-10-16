@@ -57,14 +57,22 @@ export class OutputCapture {
     }
   }
   result() {
-    const head = this.head.subarray(0, this.headUsed);
+    let head = this.head.subarray(0, this.headUsed);
     let tail = this.tailUsed < this.tail.length ? this.tail.subarray(0, this.tailUsed) : Buffer.concat([this.tail.subarray(this.cursor), this.tail.subarray(0, this.cursor)]);
     const omitted = this.bytes - head.length - tail.length;
     if (!omitted) return { text: cleanOutput(Buffer.concat([head, tail])), omitted, truncated: false };
+    let headTrimmed = 0;
+    for (let offset = Math.max(0, head.length - 3); offset < head.length; offset++) {
+      if (head[offset]! < 0xc2 || head[offset]! > 0xf4) continue;
+      try {
+        const decoded = new TextDecoder('utf8', { fatal: true }).decode(head.subarray(offset), { stream: true });
+        if (!decoded) { headTrimmed = head.length - offset; head = head.subarray(0, offset); break; }
+      } catch { /* 无效序列由 cleanOutput 替换，不计作截断。 */ }
+    }
     // 尾部可能从 UTF-8 续字节开始，移除截断造成的不完整序列。
     let start = 0;
     while (start < Math.min(3, tail.length) && (tail[start]! & 0xc0) === 0x80) start++;
     tail = tail.subarray(start);
-    return { text: cleanOutput(head) + (this.mode === 'head_tail' ? omission : '') + cleanOutput(tail), omitted: omitted + start, truncated: true };
+    return { text: cleanOutput(head) + (this.mode === 'head_tail' ? omission : '') + cleanOutput(tail), omitted: omitted + headTrimmed + start, truncated: true };
   }
 }

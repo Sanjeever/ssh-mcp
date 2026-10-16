@@ -55,7 +55,7 @@ export async function copyLimited(read: (buffer: Buffer, position: number) => Pr
     if (!end) { position += chunks.reduce((total, chunk) => total + chunk.capacity, 0); continue; }
     position = end.offset + end.count;
     if (chunks.some(chunk => chunk.offset > position && chunk.count > 0)) throw new SSHError('ssh_transfer_failed', '源文件在传输中发生不连续变化，目标尚未发布', { reason: 'source_changed' });
-    // 首次写入可能使测试或外部进程扩展源；确认 EOF 时不能沿用预检大小。
+    // 本批写入期间源可能增长，确认 EOF 不能沿用预检大小。
     if (!chunks.some(chunk => chunk.count > 0)) return;
     const count = await read(Buffer.alloc(1), position); check();
     if (!count) return;

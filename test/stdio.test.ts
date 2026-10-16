@@ -22,6 +22,8 @@ test('真实 stdio 初始化、列表、严格参数与 EOF', async t => {
   assert.deepEqual(invalid.structuredContent, { error: { code: 'ssh_input_invalid', message: '工具参数无效，请检查字段类型、取值范围和未知参数', phase: 'validation', operation_state: 'not_started', issues: [{ path: [], code: 'unrecognized_keys' }] } });
   const bounds = await p.request('tools/call', { name: 'ssh_exec', arguments: { server_id: 'test', command: 'ok', timeout_seconds: 0 } }).result;
   assert.match(JSON.stringify(bounds.structuredContent), /"path":\["timeout_seconds"\].*"minimum":1/);
+  const tooLarge = await p.request('tools/call', { name: 'ssh_exec', arguments: { server_id: 'test', command: 'ok', stdin: '中'.repeat(350000) } }).result;
+  assert.match(JSON.stringify(tooLarge.structuredContent), /"path":\["stdin"\].*"maximum":1048576/);
   await assert.rejects(p.request('tools/call', { name: 'absent', arguments: {} }).result, /未知工具/);
   p.child.stdin.end(); assert.equal((await p.closed)[0], 0); assert.equal(p.diagnostics(), '');
 });

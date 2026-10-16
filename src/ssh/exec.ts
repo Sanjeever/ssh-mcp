@@ -20,6 +20,7 @@ export async function exec(connection: Connection, command: string, result: Exec
   const input = Buffer.from(options.stdin ?? '');
   if (input.length > MAX_STDIN_BYTES) throw new SSHError('ssh_input_invalid', 'stdin 编码后不能超过 1 MiB');
   let signaled = false;
+  let inputSent = 0;
   try {
     await connection.wait<void>(done => {
       context.phase = 'exec'; context.operation_state = 'may_have_started';
@@ -32,12 +33,15 @@ export async function exec(connection: Connection, command: string, result: Exec
         stream.on('exit', (code: number | null, signal?: string) => {
           if (typeof code === 'number') result.exit_code = code;
           if (signal) { signaled = true; result.exit_code = null; result.exit_signal = signal; }
+          if (typeof code === 'number' || signal) context.operation_state = 'completed';
         });
-        stream.once('close', () => done(null));
+        stream.once('close', () => done(inputSent < input.length ? new SSHError('ssh_exec_unknown', '远端在 stdin 发送完成前关闭，请检查远端状态', { reason: 'stdin_interrupted' }) : null));
         stream.once('error', () => done(new SSHError('ssh_exec_unknown', 'SSH 执行中断或未返回退出码，远端状态可能不确定，请检查后再操作')));
         const sendInput = async () => {
           for (let offset = 0; offset < input.length; offset += 32 * 1024) {
+            if (stream.destroyed) throw new Error('输入通道已关闭');
             await connection.wait<void>(written => { stream.write(input.subarray(offset, offset + 32 * 1024), written); }, stream);
+            inputSent = Math.min(input.length, offset + 32 * 1024);
           }
           if (!stream.destroyed) stream.end();
         };

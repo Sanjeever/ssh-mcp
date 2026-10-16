@@ -11,7 +11,7 @@ export { copyLimited, MAX_TRANSFER_BYTES } from './copy.js';
 import type { CopyOptions } from './copy.js';
 
 export interface TransferResult { bytes_transferred: number; publication_state?: 'not_published' | 'unknown' | 'published'; temporary_path?: string; cleanup_pending?: boolean }
-export interface TransferOptions extends CopyOptions { atomic?: boolean }
+export interface TransferOptions extends Omit<CopyOptions, 'onFailure'> { atomic?: boolean }
 const failed = (message: string) => new SSHError('ssh_transfer_failed', message);
 const invalid = () => new SSHError('ssh_transfer_invalid', '传输源必须是可访问的单个普通文件，目标不能是目录或符号链接，源文件不能超过 128 MiB');
 export function validatePaths(local: string, remote: string) {
@@ -37,7 +37,7 @@ export async function transfer(connection: Connection, direction: 'upload' | 'do
     context.phase = 'open';
     if (connection.signal.aborted) throw interrupted(connection.signal);
     if (direction === 'upload') {
-      const info = await lstat(local).catch(() => { throw invalid(); });
+      const info = await lstat(local).catch(error => { throw new SSHError('ssh_transfer_invalid', invalid().message, { reason: failureReason(error) }); });
       if (!info.isFile() || info.size > MAX_TRANSFER_BYTES) throw invalid();
       file = await open(local, 'r');
       const actual = await file.stat();
@@ -48,7 +48,7 @@ export async function transfer(connection: Connection, direction: 'upload' | 'do
     sftp.on('error', () => {});
     sftp.once('close', () => { sftpClosed = true; });
     const files = sftp;
-    const wait = <T>(start: (done: (error: Error | undefined | null, value: T) => void) => void) => connection.wait(start, files);
+    const wait = <T>(start: (done: (error: Error | undefined | null, value: T) => void) => void) => sftpClosed ? Promise.reject<T>(failed('SFTP 子系统已关闭')) : connection.wait(start, files);
     if (direction === 'upload') {
       try { existing = await wait<Stats>(done => files.lstat(remote, done)); }
       catch (error) { if ((error as { code?: number }).code !== 2) throw error; }
@@ -84,6 +84,7 @@ export async function transfer(connection: Connection, direction: 'upload' | 'do
       const actual = await wait<Stats>(done => files.fstat(source, done));
       if (!actual.isFile() || actual.size > MAX_TRANSFER_BYTES) throw invalid();
       const candidate = join(dirname(local), `.ssh-download-${randomUUID()}`);
+      context.operation_state = 'may_have_started';
       file = await open(candidate, 'wx', 0o600); temp = candidate;
       const target = file;
       await copyLimited((buffer, position) => wait<number>(done => files.read(source, buffer, 0, buffer.length, position, (error, bytes) => done(error, bytes))),
@@ -150,7 +151,7 @@ export async function transfer(connection: Connection, direction: 'upload' | 'do
     sftp?.end();
     if (temp) {
       try { await unlink(temp); }
-      catch { failure = new SSHError(failure instanceof SSHError ? failure.code : 'ssh_transfer_failed', `${failure instanceof Error ? failure.message + '；' : ''}下载临时文件清理失败，请检查本地目录`); }
+      catch { failure = new SSHError(failure instanceof SSHError ? failure.code : 'ssh_transfer_failed', `${failure instanceof Error ? failure.message + '；' : ''}下载临时文件清理失败，请检查本地目录`, failure instanceof SSHError ? failure.details : { phase: 'cleanup' }); }
     }
   }
   if (failure) throw failure;

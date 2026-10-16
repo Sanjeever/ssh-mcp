@@ -56,6 +56,8 @@ test('输出保留两端和独立 stderr 配额，stdin 支持空输入与大文
   const capture = new OutputCapture(128, 'head_tail');
   for (const byte of Buffer.from('中文😀'.repeat(100))) capture.append(Buffer.from([byte]));
   assert(!capture.result().text.includes('�')); assert(capture.result().omitted > 0);
+  const rendered = capture.result().text.replace('\n[...已省略输出...]\n', '');
+  assert.equal(capture.bytes - Buffer.byteLength(rendered), capture.result().omitted);
 });
 test('执行、会话等待取消及超时保留已有输出', async t => {
   for (const mode of ['cancel', 'timeout', 'session']) {
