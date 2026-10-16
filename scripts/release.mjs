@@ -5,7 +5,7 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { root, run } from './process.mjs';
 import { npm } from './npm.mjs';
-import { pack } from './pack-check.mjs';
+import { pack } from './pack.mjs';
 import { check } from './version.mjs';
 
 const digest = (path, algorithm, encoding) => createHash(algorithm).update(readFileSync(path)).digest(encoding);
@@ -43,36 +43,36 @@ export function registryState(result, expectedIntegrity) {
   throw new Error(`查询 npm 版本失败：${data?.error?.code ?? result.status}，停止发布`);
 }
 
-export function publishPackage(pkg, version, runner = npm) {
+export function publishPackage(pkg, version, runner = npm, base = root) {
   const view = runner(['view', `${pkg.name}@${version}`, 'dist.integrity', '--json', '--registry=https://registry.npmjs.org'], { ...capture, allowFailure: true });
   if (registryState(view, pkg.integrity) === 'identical') {
     console.log(`已核对并跳过相同产物 ${pkg.name}@${version}`);
     return;
   }
-  runner(['publish', join(root, 'dist/packages', pkg.filename), '--access', 'public', '--registry=https://registry.npmjs.org']);
+  runner(['publish', join(base, 'dist/packages', pkg.filename), '--access', 'public', '--registry=https://registry.npmjs.org']);
   console.log(`已发布 ${pkg.name}@${version}`);
 }
 
-export function publish(tag) {
-  const version = check(root, tag);
-  const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
-  assert.equal(manifest.version, version); validateManifest(manifest);
-  const repo = process.env.GH_REPO;
-  if (repo !== 'Sanjeever/ssh-mcp' || !process.env.GH_TOKEN) throw new Error('发布需要正确的 GH_REPO 和工作流 GH_TOKEN');
-  const existing = run('gh', ['api', `repos/${repo}/releases/tags/${tag}`], { ...capture, allowFailure: true });
+export function publish(tag, { base = root, env = process.env, github = run, registry = npm } = {}) {
+  const version = check(base, tag);
+  const manifest = JSON.parse(readFileSync(join(base, 'dist/release-manifest.json'), 'utf8'));
+  assert.equal(manifest.version, version); validateManifest(manifest, base);
+  const repo = env.GH_REPO;
+  if (repo !== 'Sanjeever/ssh-mcp' || !env.GH_TOKEN) throw new Error('发布需要正确的 GH_REPO 和工作流 GH_TOKEN');
+  const existing = github('gh', ['api', `repos/${repo}/releases/tags/${tag}`], { ...capture, allowFailure: true });
   let data;
   try { data = JSON.parse(existing.stdout.toString()); } catch { throw new Error('无法解析 GitHub Release 响应，停止发布'); }
-  const files = [join(root, 'dist/packages', manifest.package.filename)];
+  const files = [join(base, 'dist/packages', manifest.package.filename)];
   if (existing.status === 0) {
     if (!data.draft) throw new Error('该版本 GitHub Release 已公开，请核对发布状态；不会覆盖公开版本');
-    run('gh', ['release', 'edit', tag, '--notes-file', `docs/releases/${version}.md`, '--title', tag]);
-    run('gh', ['release', 'upload', tag, ...files, '--clobber']);
+    github('gh', ['release', 'edit', tag, '--notes-file', join(base, `docs/releases/${version}.md`), '--title', tag]);
+    github('gh', ['release', 'upload', tag, ...files, '--clobber']);
   } else if (String(data.status) === '404') {
-    run('gh', ['release', 'create', tag, ...files, '--verify-tag', '--draft', '--title', tag, '--notes-file', `docs/releases/${version}.md`]);
+    github('gh', ['release', 'create', tag, ...files, '--verify-tag', '--draft', '--title', tag, '--notes-file', join(base, `docs/releases/${version}.md`)]);
   } else throw new Error('查询 GitHub Release 失败，停止发布');
   // 发布失败立即停止，保留 draft；恢复时核对同一 tarball 的完整性。
-  publishPackage(manifest.package, version);
-  run('gh', ['release', 'edit', tag, '--draft=false', '--latest']);
+  publishPackage(manifest.package, version, registry, base);
+  github('gh', ['release', 'edit', tag, '--draft=false', '--latest']);
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

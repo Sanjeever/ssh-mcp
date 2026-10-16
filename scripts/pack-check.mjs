@@ -6,25 +6,21 @@ import { fileURLToPath } from 'node:url';
 import { root } from './process.mjs';
 import { npm } from './npm.mjs';
 import { smoke } from './smoke.mjs';
-
-export function pack(dir, destination) {
-  mkdirSync(destination, { recursive: true });
-  const result = npm(['pack', dir, '--json', '--ignore-scripts', '--pack-destination', destination], { stdio: ['ignore', 'pipe', 'pipe'] });
-  const [info] = JSON.parse(result.stdout);
-  for (const file of info.files) assert.match(file.path, /^(package\.json|README\.md|LICENSE|dist\/[a-z0-9/.-]+\.js)$/);
-  assert(info.files.some(file => file.path === 'dist/cli.js'));
-  assert(!info.files.some(file => /dist\/(npm|packages|release)\//.test(file.path)));
-  return { path: join(destination, info.filename), info };
-}
+import { pack } from './pack.mjs';
+import { startSSH } from '../test/helpers/ssh-server.mjs';
+import { execSession } from '../test/helpers/exec-session.mjs';
+import { sftpSession } from '../test/helpers/sftp-session.mjs';
 
 export async function checkPack(tarball) {
   const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
   const temp = mkdtempSync(join(tmpdir(), 'ssh-mcp-pack-'));
+  const cleanup = [];
   try {
+    const ssh = await startSSH({ after: fn => cleanup.push(fn) }, { session: session => { execSession(session); sftpSession(ssh.root)(session); } });
     const entry = tarball ? { path: resolve(tarball) } : pack(root, join(temp, 'tarballs'));
     const cache = join(temp, 'cache');
     const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('SSH_MCP_') && !key.toLowerCase().startsWith('npm_config_')));
-    Object.assign(env, { SSH_MCP_SERVER_SMOKE_HOST: '192.0.2.1', SSH_MCP_SERVER_SMOKE_USERNAME: 'test', SSH_MCP_SERVER_SMOKE_PASSWORD: '合成测试密码', SSH_MCP_KNOWN_HOSTS: join(temp, 'known_hosts') });
+    Object.assign(env, { SSH_MCP_SERVER_SMOKE_HOST: ssh.config.host, SSH_MCP_SERVER_SMOKE_PORT: String(ssh.config.port), SSH_MCP_SERVER_SMOKE_USERNAME: ssh.config.username, SSH_MCP_SERVER_SMOKE_PASSWORD: ssh.config.password, SSH_MCP_KNOWN_HOSTS: join(temp, 'known_hosts') });
     // 首次正常安装准备独立 registry 缓存；Unix 限制 PATH，验证没有编译器也能安装。
     const installEnv = { ...env };
     if (process.platform !== 'win32') {
@@ -41,10 +37,18 @@ export async function checkPack(tarball) {
       assert.equal(meta.version, pkg.version); assert.equal(meta.optionalDependencies, undefined); assert.equal(meta.bin['ssh-mcp'], 'dist/cli.js');
       const version = npm(['exec', '--offline', '--cache', cache, '--', 'ssh-mcp', '--version'], { cwd: install, env, stdio: ['ignore', 'pipe', 'pipe'] });
       assert.equal(version.stdout.toString().trim(), pkg.version);
-      assert.equal(await smoke(process.execPath, [join(installed, 'dist/cli.js')], env, install), pkg.version);
-      console.log(`已验证 ${process.platform}-${process.arch} 隔离安装 ${index === 0 ? '正常安装' : flags.join(' ')}、CLI、初始化与四工具发现`);
+      const source = join(install, 'source'), target = join(install, 'target'); writeFileSync(source, '隔离安装 SFTP 往返');
+      const remote = `/payload-${index}`;
+      const calls = [
+        { name: 'ssh_exec', arguments: { server_id: 'smoke', command: 'ok' } },
+        { name: 'ssh_upload', arguments: { server_id: 'smoke', local_path: source, remote_path: remote } },
+        { name: 'ssh_download', arguments: { server_id: 'smoke', local_path: target, remote_path: remote } },
+      ];
+      assert.equal(await smoke(process.execPath, [join(installed, 'dist/cli.js')], env, install, calls), pkg.version);
+      assert.equal(readFileSync(target, 'utf8'), readFileSync(source, 'utf8'));
+      console.log(`已验证 ${process.platform}-${process.arch} 隔离安装 ${index === 0 ? '正常安装' : flags.join(' ')}、CLI、初始化与四工具实际调用`);
     }
     return entry.info;
-  } finally { rmSync(temp, { recursive: true, force: true }); }
+  } finally { for (const close of cleanup) await close(); rmSync(temp, { recursive: true, force: true }); }
 }
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) await checkPack(process.argv[2]);
