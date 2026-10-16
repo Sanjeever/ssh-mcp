@@ -1,8 +1,8 @@
 # SSH MCP
 
-通过 stdio MCP 连接配置中的多台 SSH 服务器，执行命令、上传和下载文件。使用 TypeScript 开发，编译成 JavaScript，以单个 `@sanjeever/ssh-mcp` npm 包分发。运行要求 Node.js 22+，无需 TypeScript、Go、本机 ssh/scp 或编译工具。
+通过 stdio MCP 连接配置中的多台 SSH 服务器，执行命令、上传和下载文件。使用 TypeScript 开发，通过 esbuild 将应用与运行依赖合并为单个 `dist/cli.js`，以 `@sanjeever/ssh-mcp` npm 包分发。运行要求 Node.js 22+，无需 TypeScript、Go、本机 ssh/scp 或编译工具，安装不下载 registry 运行依赖。
 
-支持 macOS、Linux、Windows 的 x64 与 arm64。ssh2 的原生加速为可选项，禁用安装脚本或省略可选依赖时仍可使用四个工具。0.2.0 起停止发布平台子包和独立 Go 二进制；直接使用旧二进制的用户须切换到 Node 入口，历史版本继续保留。
+支持 macOS、Linux、Windows 的 x64 与 arm64。0.2.1 单文件包使用 ssh2 的 JavaScript 加密实现与内嵌 WASM，不加载可选原生加速模块；禁用安装脚本或省略可选依赖时仍可使用四个工具。0.2.0 起停止发布平台子包和独立 Go 二进制；直接使用旧二进制的用户须切换到 Node 入口，历史版本继续保留。
 
 ## 客户端配置
 
@@ -13,7 +13,7 @@
   "mcpServers": {
     "ssh": {
       "command": "npx",
-      "args": ["-y", "@sanjeever/ssh-mcp@0.2.0"],
+      "args": ["-y", "@sanjeever/ssh-mcp@0.2.1"],
       "env": {
         "SSH_MCP_SERVER_DEV_HOST": "192.0.2.10",
         "SSH_MCP_SERVER_DEV_USERNAME": "deploy",
@@ -80,7 +80,7 @@ stdout 专用于 MCP 协议，无启动 banner。诊断写 stderr，默认不记
 
 ## 开发与本地验证
 
-开发使用 [package.json](package.json) 指定的 pnpm 11.20.0，要求 Node.js 22.13+；应用运行最低版本为 Node.js 22.0.0。TypeScript 使用 strict 与 NodeNext，通过 tsc 编译，无运行时 TS 加载器。pnpm 配置文件只保留单包安装策略，禁用 ssh2 和 cpu-features 的可选原生构建。
+开发使用 [package.json](package.json) 指定的 pnpm 11.20.0，要求 Node.js 22.13+；应用运行最低版本为 Node.js 22.0.0。TypeScript 使用 strict 与 NodeNext，tsc 用于类型检查及模块单元测试，esbuild 生成单文件 ESM 入口，无运行时 TS 加载器。依赖版本在开发依赖与锁文件中固定，消费发布包不会安装这些开发依赖。pnpm 配置文件保留单包安装策略，esbuild 使用平台预编译工具，禁用依赖安装脚本。
 
 ```sh
 pnpm install --frozen-lockfile --ignore-scripts
@@ -91,23 +91,23 @@ pnpm pack:check
 node dist/cli.js --version
 ```
 
-离线安装前先运行 `pnpm fetch --frozen-lockfile` 准备 registry 依赖缓存，再运行 `pnpm install --frozen-lockfile --offline --ignore-scripts`。CI 环境设有 `CI=true`。测试针对编译产物，修改源码后先构建。
+开发环境离线安装前先运行 `pnpm fetch --frozen-lockfile` 准备依赖缓存，再运行 `pnpm install --frozen-lockfile --offline --ignore-scripts`。CI 环境设有 `CI=true`。修改源码后先构建。`pnpm test` 将模块单元测试所需代码编译到 `.build/test`；端到端测试始终运行 `dist/cli.js`，不会替换待发布单文件。
 
-测试采用 node:test、临时密钥、临时 known_hosts 与 Node 环回 SSH/SFTP 服务，不连接真实服务器。官方 SDK 客户端和真实 stdio 测试覆盖四工具 Schema、结构化结果及生命周期。`pack:check` 真实执行 npm pack，在仓库外使用独立缓存完成正常安装、禁用脚本和省略可选依赖三条路径，验证 CLI、初始化、四工具调用与 SFTP 往返。Unix 正常安装的 PATH 不提供编译器。
+测试采用 node:test、临时密钥、临时 known_hosts 与 Node 环回 SSH/SFTP 服务，不连接真实服务器。官方 SDK 客户端和真实 stdio 测试覆盖四工具 Schema、结构化结果、生命周期、私钥认证及 ChaCha20。`pack:check` 真实执行 npm pack，在仓库外完成正常安装、禁用脚本和省略可选依赖三条路径，核对安装目录只有应用包，并验证 CLI、初始化、四工具调用与 SFTP 往返。Unix 正常安装的 PATH 不提供编译器。
 
-包内通过 files 白名单发布编译 JS、package.json、README 和 LICENSE，排除源码、测试、凭据和发布产物。安装与首次启动不下载应用二进制、不运行 tsc、不需要开发依赖。
+包内通过 files 白名单发布 `dist/cli.js`、`dist/THIRD_PARTY_NOTICES.txt`、package.json、README 和 LICENSE，共五个文件。构建检查仅生成一个 JavaScript 文件，外部导入只允许 Node 内置模块；第三方许可根据实际内嵌依赖生成。安装与首次启动不下载应用二进制、不运行构建工具、不需要开发依赖。
 
 ## 版本与发布准备
 
 根 [package.json](package.json) 的 `version` 是唯一应用版本源，CLI 与 MCP server info 读取同一字段，安装后的包内路径也有验证。每版中文日志放在 `docs/releases/<version>.md`，先编写非空日志，再运行：
 
 ```sh
-pnpm bump 0.2.0
+pnpm bump 0.2.1
 pnpm install --lockfile-only --offline --ignore-scripts
-node scripts/version.mjs check v0.2.0
+node scripts/version.mjs check v0.2.1
 ```
 
-`bump` 在改写前校验正式三段版本和非空中文日志，不自动提交、打标签或推送。版本、锁文件和对应日志放在同一个发布准备提交。迁移说明和本机性能数据见 [0.2.0 日志](docs/releases/0.2.0.md)。
+`bump` 在改写前校验正式三段版本和非空中文日志，不自动提交、打标签或推送。版本、锁文件和对应日志放在同一个发布准备提交。单文件构建与本机性能数据见 [0.2.1 日志](docs/releases/0.2.1.md)，TypeScript 迁移记录见 [0.2.0 日志](docs/releases/0.2.0.md)。
 
 [CI](.github/workflows/ci.yml) 集中编译一次，生成一个 npm tarball 和恢复所需的版本、文件名、完整性记录。macOS、Linux、Windows 的 x64/arm64 原生矩阵，以及 Node.js 22.0.0 任务，复用同一份 JS 与 tarball，测试时不重新构建。工作流配置不代表各 runner 已运行通过。
 
@@ -115,9 +115,9 @@ node scripts/version.mjs check v0.2.0
 
 ```sh
 pnpm build
-node scripts/release.mjs prepare v0.2.0
+node scripts/release.mjs prepare v0.2.1
 node scripts/release.mjs verify
-node scripts/pack-check.mjs dist/packages/sanjeever-ssh-mcp-0.2.0.tgz
+node scripts/pack-check.mjs dist/packages/sanjeever-ssh-mcp-0.2.1.tgz
 ```
 
 产物位于 `dist/packages/`，完整性记录为 `dist/release-manifest.json`。发布准备完成后，不重新构建或重打包替换已验证产物。
