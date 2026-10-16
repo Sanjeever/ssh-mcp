@@ -1,320 +1,256 @@
-# ssh-mcp 实现交接
+# ssh-mcp 0.2.0 TypeScript 迁移交接
 
-本文交接用户已经确认的需求、实现边界和验收标准。接手 Agent 应在当前仓库完成实现，按可验证的功能增量逐步提交。本文是实现输入，尚不代表功能已经完成或发布。
+本文记录用户已确认的迁移方案、实施授权与验收条件，替代原 Go 首版交接。文中目标不代表已经实现、验证或发布。接手后应直接推进实现，按完整功能增量验证并创建本地小提交。
 
-## 1. 项目与已确认决策
+## 1. 已确认目标与授权
 
-- 工作目录：`/Users/sanjeev/code/go/ssh-mcp`。
-- GitHub：`https://github.com/Sanjeever/ssh-mcp`。
-- npm 入口包：`@sanjeever/ssh-mcp`，公开发布。
-- Go module 使用 `github.com/Sanjeever/ssh-mcp`。
-- 当前仓库已经初始化，分支为 `main`，尚无提交；实际 origin 为 `git@github-sanjeever:Sanjeever/ssh-mcp.git`。保留用户已有 remote 配置。
-- 核心逻辑使用 Go，npm 提供薄 Node.js 启动器，通过 `npx` 分发和启动预编译二进制。
-- MCP 仅支持 stdio，由客户端启动本地子进程。所有运行配置来自客户端 `mcpServers` 的 `env`，不要求额外配置文件。
-- 支持配置多台目标服务器，提供 `ssh_list`、`ssh_exec`、`ssh_upload`、`ssh_download` 四个工具。
-- 使用服务器账号密码或已有私钥直接认证。用户无需先登录远端追加公钥，程序也不自动修改远端 `authorized_keys`。
-- `SSH_MCP_HOST_KEY_POLICY` 可选，默认 `accept_new`。
-- `SSH_MCP_KNOWN_HOSTS` 可选，默认 `~/.ssh/known_hosts`，复用用户现有 OpenSSH 信任记录。
-- 首发支持 macOS、Linux、Windows 的 x64 和 arm64，共六个平台。
-- 推送正式版本标签时，GitHub Actions 自动测试、构建、创建带更新日志的 GitHub Release，并通过 OIDC 发布 npm 包。
-- npm 使用可信发布者，不以 `NPM_TOKEN` 作为日常发布方案。首次发布初始化和可信发布者设置需要写清操作步骤。
-- README.md、AGENTS.md、更新日志、工具描述、错误信息、必要代码注释使用简体中文。代码标识符、协议字段和固定技术名称使用英文。
-- 提交信息遵循 Conventional Commits，type 和 scope 使用英文小写，description、正文及说明使用简体中文。用户后续已明确撤回“提交信息使用英文”的早期要求。
-- 许可证使用 MIT，版权署名 `Sanjeever`，首年为 2026。
+- 下个版本定为 `0.2.0`，使用 TypeScript 开发，编译成 JavaScript，以单个 `@sanjeever/ssh-mcp` npm 包分发。
+- 完全废弃 Go。最终源码、测试服务、开发、构建、打包和 CI 均不依赖 Go，不保留双实现或 Go 回退路径。
+- 保持现有四个工具、环境变量配置、结构化结果和错误码。本版集中完成技术栈与分发迁移，不夹带新增产品功能。
+- 简化维护与发布是确定目标。启动性能需要实测，不预先承诺提升比例。
+- 实现、依赖安装、本地构建、测试、打包和本地小提交已获授权。常规可逆实现选择自主处理，无需逐步请求确认。
+- 推送、创建或推送发布标签、GitHub Release、npm 发布和账户配置变更须另行授权。缺少发布授权不阻止本地实现与发布准备。
+- 不连接真实 SSH 服务器，不修改用户真实 known_hosts、参考仓库或全局工具配置。保留 origin 和用户已有改动。
 
-以下常规实现细节按本交接采用：初始版本 `0.1.0`；首版仅支持正式三段版本号；根目录 `package.json` 的 `version` 作为应用版本唯一来源。用户未单独指定这些值，若实际约束要求调整，应说明理由并同步关联位置。
+当前项目 AGENTS.md 中 Go、平台包、版本注入和七包发布条款描述旧架构。用户已明确授权迁移，实施时应同步改写这些条款，不能据此保留 Go 或重新请求迁移许可。其他仍适用约束继续遵守。
 
-## 2. 已查看的参考实现
+## 2. 当前基线与阅读入口
 
-### qizhihe
+- 工作目录 `/Users/sanjeev/code/go/ssh-mcp`，仓库 `https://github.com/Sanjeever/ssh-mcp`。
+- 编写交接时根 package.json 版本为 `0.1.1`，HEAD 为 `a24147c`。接手时重新核对分支、HEAD、工作区和暂存区，不能假设状态未变化。
+- 当前核心位于 `cmd/ssh-mcp`、`internal/config`、`internal/sshclient`、`internal/tools`。
+- `internal/testssh` 提供环回 SSH/SFTP 测试服务，Go 测试作为行为参考。
+- `bin/ssh-mcp.cjs` 定位平台包并启动 Go 二进制。
+- `scripts/platforms.mjs`、`build.mjs`、`pack-check.mjs`、`version.mjs`、`release.mjs` 与 `.github/workflows/` 实现六平台、七包构建发布。
+- README 是用户契约入口，`internal/sshclient/errors.go` 与调用方是错误码参考，`cmd/ssh-mcp/main_test.go` 是协议与生命周期参考。
 
-路径 `/Users/sanjeev/code/go/qizhihe`。优先阅读：
+先读相关代码和测试，再迁移行为。保留现有握手总超时分类修复及其回归场景。旧代码最终由 Git 历史保留，不另建备份目录。
 
-- `internal/sshclient/client.go`：密码与私钥认证、主机公钥校验、连接与执行超时、取消、退出码处理。
-- `internal/sshclient/transfer.go`：通过 SFTP 上传和下载单个文件、默认禁止覆盖、下载使用临时文件。
-- `internal/sshclient/client_test.go`：SSH 行为测试。
-- `internal/agent/ssh_tools.go`：四个工具的定义和调用入口。
+## 3. 技术选型与结构
 
-可以提取适用实现，但需重新适配本项目契约。qizhihe 依赖数据库、用户身份、审批、连接 revision、工作区逻辑路径和配置页面；这些不属于本项目。
+| 项目 | 决策 |
+| --- | --- |
+| 语言 | TypeScript，启用 strict |
+| 运行时 | 延续 Node.js 22+，验证最低版本 |
+| 模块 | ESM，TypeScript 使用 NodeNext |
+| 构建 | tsc，不默认引入 bundler 或运行时 TS 加载器 |
+| MCP | 官方 TypeScript SDK 稳定版本，验证客户端协议兼容性 |
+| SSH / SFTP | 直接使用 ssh2，不叠加无实际需要的高层 wrapper |
+| Schema | Zod，拒绝未知字段 |
+| 测试 | node:test，测试编译产物和真实 stdio 入口 |
+| 包管理 | 沿用 pnpm，提交冻结锁文件；公开发布使用 npm CLI |
 
-尤其注意：qizhihe 的原实现将远端输出写入带通道标签的 writer，并在输出达到上限时关闭连接；本项目应分别捕获 stdout/stderr，按下文约定截断返回内容并继续排空输出。
+推荐布局可按实际模块边界调整：
 
-### codex-deck
-
-路径 `/Users/sanjeev/code/go/codex-deck`。已经查看：
-
-- `.github/workflows/release.yml`。
-- `scripts/version.mjs`。
-- `docs/development.md` 中版本和发布流程。
-- `docs/releases/1.3.6.md`。
-
-沿用其发布思路：标签触发，先校验版本和对应日志，测试及构建全部通过，再用 `docs/releases/<version>.md` 作为 Release 正文。ssh-mcp 不依赖 Wails、前端、桌面签名或公证，不照搬这些构建步骤。
-
-参考仓库仅用于阅读，不修改它们。各自 AGENTS.md 约束各自仓库，不替代本项目已经确认的决策。
-
-## 3. 配置契约
-
-使用 `SSH_MCP_SERVER_<ID>_<FIELD>` 组织服务器配置，不采用 JSON 字符串配置，也不要求编号或单独列出 ID。
-
-```json
-{
-  "mcpServers": {
-    "ssh": {
-      "command": "npx",
-      "args": ["-y", "@sanjeever/ssh-mcp@0.1.0"],
-      "env": {
-        "SSH_MCP_SERVER_DEV_HOST": "192.0.2.10",
-        "SSH_MCP_SERVER_DEV_USERNAME": "deploy",
-        "SSH_MCP_SERVER_DEV_PASSWORD": "<dev-password>",
-        "SSH_MCP_SERVER_DEV_DESCRIPTION": "开发环境",
-        "SSH_MCP_SERVER_STAGING_HOST": "192.0.2.20",
-        "SSH_MCP_SERVER_STAGING_PORT": "2222",
-        "SSH_MCP_SERVER_STAGING_USERNAME": "deploy",
-        "SSH_MCP_SERVER_STAGING_PASSWORD": "<staging-password>",
-        "SSH_MCP_SERVER_STAGING_DESCRIPTION": "测试环境"
-      }
-    }
-  }
-}
+```text
+src/
+  cli.ts
+  config.ts
+  server.ts
+  errors.ts
+  ssh/
+    client.ts
+    known-hosts.ts
+    exec.ts
+    transfer.ts
+test/
+  helpers/
+    ssh-server.mjs
+  *.test.mjs
+scripts/
+  version.mjs
+  pack-check.mjs
+  release.mjs
+  smoke.mjs
+dist/
+  编译后的 JS
 ```
 
-这是采用 `mcpServers` JSON 的客户端示例；其他客户端的外层格式按其实际要求填写，不能声称所有客户端都直接使用该 JSON。
+package.json 的 bin 直接指向带 Node shebang 的 `dist/cli.js`，在当前进程内启动 MCP。用户安装后无需 TypeScript、Go、本机 ssh/scp 或编译工具。开发脚本和测试可沿用 mjs 风格。
 
-| 字段后缀 | 约定 |
-| --- | --- |
-| `HOST` | 必填，主机名或 IP；端口单独配置 |
-| `PORT` | 可选，默认 22，范围 1–65535 |
-| `USERNAME` | 必填 |
-| `PASSWORD` | 密码认证凭据，与 `PRIVATE_KEY_PATH` 互斥 |
-| `PRIVATE_KEY_PATH` | 本机私钥文件路径，与 `PASSWORD` 互斥 |
-| `PASSPHRASE` | 可选，仅用于私钥认证 |
-| `DESCRIPTION` | 可选，帮助 Agent 识别服务器用途 |
+根 package.json 的 version 继续作为唯一应用版本源。CLI 和 MCP server info 从同一来源读取，验证发布包内路径解析，移除 Go ldflags 和平台版本同步机制。
 
-ID 限定为以大写字母开头、由大写字母、数字和下划线组成，例如 `DEV`、`PROD_DB`。工具使用对应的小写 ID，例如 `dev`、`prod_db`。不要猜测、模糊匹配或自动选择默认目标。
+## 4. 先验证的关键依赖
 
-按完整字段后缀从长到短匹配，正确处理 `PRIVATE_KEY_PATH` 和带下划线的 ID。未知服务器字段、非法 ID、缺少必填字段、认证冲突、非法端口等在启动时明确报错。至少配置一台服务器。密码和口令保留原始内容，不能为统一处理而 trim。
+全面迁移前先完成小规模可运行验证，查阅实施时官方稳定 API，固定所选依赖并提交锁文件。
 
-启动时加载配置，运行期间保持固定，修改配置后重启进程。启动不逐台联网。错误不能回显密码、口令、私钥内容或整份环境配置。
+### 主机信任兼容性
 
-| 全局环境变量 | 默认值 | 说明 |
+ssh2 的 hostVerifier 是验证入口，不是完整 known_hosts 实现，必须显式设置。目前尚未确认一个 JS 库完整满足要求，应先筛选并验证成熟库，检查源码、维护状态和实际行为。
+
+验收涵盖明文与哈希主机名、非默认端口、IPv6、多主机与通配规则、撤销记录及现有实现支持的可信主机规则。不能将所有校验失败视为未知主机。
+
+若候选库有缺口，明确缺口及补齐成本，在已有授权内继续研究。不要默认手写完整 OpenSSH 解析器，不通过忽略记录、关闭验证、调用本机 ssh 或保留 Go 绕过问题。若最终确需改变用户契约，提出具体取舍供用户决定，同时继续不依赖该决定的工作。未确认的库不能写成已验证选型。
+
+### 原生扩展与安装
+
+ssh2 存在可选原生扩展。验证正常安装、禁用安装脚本及省略可选依赖的路径，确认没有编译工具时基本功能可用。可选加速扩展不等于本项目必须维护平台包。
+
+不能把构建本机原生模块变成安装必要条件，不修改用户全局 npm 配置。验证实际 tarball 和依赖安装结果，不能从“纯 JS 库”描述推断安装一定无需编译。
+
+## 5. 配置与工具契约
+
+### 配置
+
+- 保留 `SSH_MCP_SERVER_<ID>_<FIELD>`，不新增配置文件或 JSON 环境变量格式。
+- ID 以大写字母开头，由大写字母、数字和下划线组成；工具使用对应小写 ID，精确指定，不猜测目标。
+- 按完整字段后缀从长到短解析，正确处理 PRIVATE_KEY_PATH 和带下划线的 ID。
+- HOST、USERNAME 必填；PORT 默认 22，范围 1–65535。HOST 支持 IPv6，端口单独填写。
+- PASSWORD 和 PRIVATE_KEY_PATH 互斥且不能为空，PASSPHRASE 仅用于私钥，DESCRIPTION 可选。
+- 密码和口令保留原始空白。至少配置一台服务器；未知字段、非法 ID、认证冲突、端口和必要路径错误在启动时拒绝。
+- 保留 `SSH_MCP_HOST_KEY_POLICY`，默认 accept_new，可选 strict；`SSH_MCP_KNOWN_HOSTS` 默认 `~/.ssh/known_hosts`。
+- 保留主目录展开与平台路径规则，不展开字符串中的 `$VAR`，不依赖 Shell 展开。
+- 启动加载后配置固定，启动和 ssh_list 不逐台联网。错误和日志不得泄露凭据或整份配置。
+
+### 四个工具
+
+| 工具 | 输入 | 结果主要字段 |
 | --- | --- | --- |
-| `SSH_MCP_HOST_KEY_POLICY` | `accept_new` | 可取 `accept_new` 或 `strict` |
-| `SSH_MCP_KNOWN_HOSTS` | `~/.ssh/known_hosts` | OpenSSH known_hosts 文件路径 |
+| ssh_list | 无参数 | servers 数组，含 server_id、description、host、port、username、auth_type |
+| ssh_exec | server_id、command，可选 timeout_seconds | server_id、stdout、stderr、exit_code、duration_ms、output_truncated |
+| ssh_upload | server_id、local_path、remote_path，可选 overwrite、timeout_seconds | server_id、路径、bytes_transferred、duration_ms |
+| ssh_download | 同上传 | 同上传 |
 
-默认路径使用 Go 获取用户主目录后构造。显式路径支持 `~/` 和 Windows 上相应的主目录写法，不依赖 Shell 展开，也不把字符串中的 `$VAR` 当成环境变量模板。路径解析和校验失败时明确返回错误。
+- 字段使用 snake_case，Schema 拒绝未知参数，工具描述和错误信息使用简体中文。
+- ssh_list 按 server_id 稳定排序，不返回凭据或私钥路径，不虚构在线状态。
+- 成功与失败结果保持现有结构。使用 MCP 工具错误语义和结构化 error.code、error.message，保留已有输出或传输进度。
+- 核对现有错误码，不因更换库随意合并、重命名或回显敏感底层错误。
 
-本地密码保存在客户端配置和进程环境中。README 如实解释凭据归属，不承诺对客户端或同一账号下的本地进程隔离。工具输入不接受账号密码，`ssh_list` 和日志不返回配置凭据。
+## 6. SSH、信任与生命周期
 
-## 4. 主机密钥与 known_hosts
+- 支持密码、普通私钥和加密私钥，不修改远端 authorized_keys。
+- 每次远端调用建立独立连接，结束后关闭；不引入连接池、自动重试、持续 Shell 或 PTY。
+- 命令交给远端默认 Shell，不通过本机 Shell，不自动输入 sudo 密码，不新增 MFA/OTP 承诺。
+- 总超时默认 180 秒，范围 1–3600 秒；TCP 连接与认证握手另有 15 秒上限，并受总超时约束。
+- 使用 SDK 取消信号覆盖连接、握手、会话、输出和传输。总超时到期不能因定时器顺序误报握手超时。
+- stdin EOF、终止信号和 MCP 会话关闭时，清理活动调用与连接，不留下无限等待、未处理 rejection 或未结束的流。
+- 关闭连接不保证远端命令停止，失败结果继续说明远端状态可能不确定。
+- stdout/stderr 共用 128 KiB 保存配额，超出后继续排空，内存不随输出无限增长。保留 UTF-8 截断和非法字节处理语义。
+- 非零退出保留输出；未收到数值退出状态时 exit_code 为 null，不能从信号推导数值或伪造成功。
+- stdout 专用于 MCP 协议，诊断写 stderr。默认日志不记录凭据、完整命令、命令输出或整份工具参数。保留 --version，无启动 banner。
+- 不新增 HTTP/SSE、Web UI、数据库、动态服务器配置工具或后台守护进程。
 
-使用 `golang.org/x/crypto/ssh/knownhosts` 读取和验证 OpenSSH 格式，兼容已有明文、哈希主机名和非默认端口记录。尊重库支持的撤销和可信主机规则，验证异常不得一概归为“未知主机”。
+主机信任要求：
 
-- 已有匹配记录：允许连接。
-- `accept_new` 遇到未知主机：先将可信记录成功写入 known_hosts，再继续认证。
-- `strict` 遇到未知主机或缺失信任文件：拒绝，不自动建立信任记录。
-- 已知主机的密钥不匹配、被撤销、文件损坏或不可读：拒绝，不覆盖原记录，不自动删除后重试。
-- 非默认端口按 OpenSSH 的 `[host]:port` 规则记录；地址使用支持 IPv6 的标准构造方式。
-- `accept_new` 不需要交互确认。README 简短说明它信任首次见到的密钥，首次连接没有外部身份核对。
+- 已知匹配记录允许；密钥变化、撤销、文件损坏或不可读拒绝，不自动替换记录。
+- strict 拒绝未知主机和缺失信任文件，不自动创建信任。
+- accept_new 对真正未知主机追加，写入成功后才继续认证，写入失败拒绝，不降级为内存信任。
+- 保留内容、注释、权限和符号链接入口，处理末尾缺少换行，不重写整份文件。
+- Unix 新目录采用 0700、新文件采用 0600，不主动修改已有权限。Windows mode 不代表 ACL 保证。
+- 同一进程内串行检查与追加，写入前重新验证，避免重复追加或接受冲突密钥。不声称能协调外部 SSH 进程。
 
-保留用户已有文件内容、注释、哈希记录和权限，采用追加方式；处理缺少末尾换行的情况。仅在需要新增信任记录且路径不存在时创建目录或文件；Unix 上新建 `.ssh` 为 0700，新建文件为 0600。Windows 按实际权限机制处理，不能将 Unix mode 当作 ACL 保证。已有目录和文件不要主动 chmod。
+## 7. SFTP 行为
 
-序列化同一进程内的检查和追加，写入前重新检查，防止并发工具调用重复建立信任或接受冲突密钥。不创建专用信任文件、备份文件或永久锁文件。不要宣称进程内锁可以协调所有外部 SSH 程序。
+- 传输单个普通文件，最大 128 MiB，不回退 SCP，不递归、不建父目录。
+- local_path 是 MCP 所在机器的绝对路径；remote_path 按远端 SFTP 绝对路径处理，以 `/` 开头，不用本机 path 改写，不展开远端主目录或环境变量。
+- 本地访问使用 MCP 进程账号权限，不新增工作区沙箱。保留源与目标类型检查，目录和符号链接目标拒绝。
+- overwrite 默认 false，实际创建必须排他，不能依赖先检查后普通创建；并发也不能覆盖已有目标。
+- 下载写同目录临时文件，完整传输并成功关闭后才发布。禁止覆盖使用排他硬链接，显式覆盖使用系统重命名；验证 Windows 行为，不支持硬链接时明确失败。
+- 下载失败或取消清理临时文件并保留原目标，处理发布前目标变化和冲突。
+- 持续检查实际字节数，覆盖源文件增长；处理背压、流错误及远端与本地文件关闭错误。
+- 上传失败可能遗留远端部分文件，如实报告，不新增原子上传承诺。
 
-known_hosts 可以是符号链接，保持用户已有入口，不能为了写入而替换链接或重建整份文件。写入失败应返回明确错误，不转成仅内存信任或忽略校验。
+## 8. 单包分发与发布流程
 
-## 5. 工具契约
+- 保留 npm 名称 `@sanjeever/ssh-mcp` 和命令 `ssh-mcp`，升级示例改为 `npx -y @sanjeever/ssh-mcp@0.2.0`。
+- files 白名单发布编译 JS、必要元数据、README 和 LICENSE，排除测试、Go、凭据、临时文件和无关产物。
+- 安装和首次启动不下载二进制、不运行 tsc、不要求开发依赖。--version 和 MCP server info 与根版本一致。
+- 删除六个平台依赖、平台 workspace 和生成机制；pnpm 若仍需单包配置，可保留必要设置，不保留空 workspace。
+- 改造 version bump/check，继续严格校验正式三段版本、标签、非空中文日志；非法输入不能部分改写版本。删除平台依赖同步。
+- pack-check 真实执行 npm pack，在项目外临时目录安装 tarball，验证 CLI、初始化、工具发现及调用，不依赖源码或未发布的 0.2.0。
+- 新增 registry 依赖后重新安排缓存。先准备依赖缓存再验证离线安装，不能照搬旧包几乎无 registry 运行依赖的假设。
 
-输入字段使用 snake_case，Schema 明确类型、必填字段和限制，拒绝未知参数。工具描述和错误信息使用简体中文。
+CI 保留 macOS、Linux、Windows 六个平台原生验证与最低 Node 22 覆盖，移除 Go setup、Go 检查、交叉编译和平台包任务。集中构建一次，用同一份 JS 产物完成平台安装验证与发布，避免发布时重新构建不同内容。
 
-### ssh_list
+release.yml 继续使用正式标签触发与 npm OIDC：
 
-- 无参数。
-- 按 server_id 稳定排序返回配置中的服务器。
-- 返回 `server_id`、`description`、`host`、`port`、`username`、`auth_type`。
-- 不返回密码、口令、私钥内容；无需返回私钥路径。
-- 不逐台建立连接，不把未探测的服务器标为“在线”。
-
-### ssh_exec
-
-输入为 `server_id`、`command` 和可选 `timeout_seconds`。后者默认 180，范围 1–3600。连接与认证握手另设 15 秒上限，并受调用总超时约束。
-
-- 使用原生 SSH exec，由远端默认 Shell 解释 command，不通过本机 Shell。
-- 每次调用建立独立连接和会话，结束后关闭。首版无需连接池。
-- 不请求 PTY，不维持持续 Shell。一次调用中的 cd、export 不延续到下次。
-- 不自动交互输入 sudo 密码，不自动回答主机或登录提示，不承诺支持 MFA、OTP 或任意 keyboard-interactive 流程。
-- 返回 `server_id`、`stdout`、`stderr`、`exit_code`、`duration_ms`、`output_truncated`。
-- stdout/stderr 合计最多保留 128 KiB；达到上限后继续读取和丢弃后续内容，不能无限缓冲或停止读取造成阻塞。
-- 输出需能被合法 JSON 编码，正确处理多字节字符截断与远端非 UTF-8 字节。
-- 非零退出码保留输出并表示工具执行失败，供 Agent 判断；认证失败、连接失败、超时、取消、命令非零退出应可区分。
-- 没有收到远端退出状态时 `exit_code` 使用 null，不能伪造成功退出码。
-- MCP 取消和超时必须关闭本次底层连接，覆盖 TCP 连接、SSH 握手、创建会话和读取输出，防止请求结束后仍无限等待。
-- 超时或连接中断时明确远端状态可能不确定，不承诺关闭 SSH 就已杀死远端进程，不自动重试命令。
-
-成功结果例如：
-
-```json
-{
-  "server_id": "dev",
-  "stdout": "Linux ...\n/home/deploy\n",
-  "stderr": "",
-  "exit_code": 0,
-  "duration_ms": 186,
-  "output_truncated": false
-}
+```text
+校验标签、根版本、中文日志与 main 历史
+  → 类型检查、测试、原生安装验证
+  → 核对已验证的单个 npm tarball
+  → 发布 npm 包
+  → 公开 GitHub Release
 ```
 
-通过 SDK 的结构化输出和适当的文本内容交付结果；错误使用 MCP 工具错误语义，并保留排错需要的已捕获输出。结合实际 SDK API 验证实现，不让输出 Schema 与失败结果互相冲突。
+- 保留发布失败即停止、恢复时核对同版本产物完整性的机制，不能把任意 registry 错误视为已发布。
+- 可先创建 draft Release，npm 成功后再公开。正文读取对应中文日志，可附同一份 npm tarball。
+- 移除六个二进制归档及其专用清单，不为单包重新建立多产物编排。
+- 保留最小权限、按版本并发控制和 OIDC，不引入日常 NPM_TOKEN 发布方式。
+- 核对根包已有可信发布者是否匹配 owner、repo、workflow filename 和 environment，不声称账户配置已经完成。
+- 旧版本及平台包保留，不自动删除、unpublish 或 deprecate。0.2.0 起停止平台包和独立 Go 二进制发布，README 与日志说明直接二进制用户需切换到 Node 入口。
 
-### ssh_upload / ssh_download
+## 9. 实施顺序与小提交
 
-输入均为 `server_id`、`local_path`、`remote_path`、可选 `overwrite` 和可选 `timeout_seconds`。`overwrite` 默认 false；超时默认值和范围与 exec 一致。
+每个提交对应完整、可审阅的功能增量，包含直接相关测试。阶段可拆分，按依赖推进，不能最后一次性提交全部迁移，也不机械按文件拆分。
 
-- 使用 SFTP；不依赖本机 scp/ssh 可执行文件，不使用 Shell 传文件，不静默回退到 SCP。
-- 首版支持单个普通文件，最大 128 MiB；不递归传目录，不自动打包解包。
-- local_path 是 MCP 进程所在机器的绝对路径，使用本机路径规则；remote_path 是远端绝对路径，按远端 SFTP 规则处理，不使用本机 filepath 改写远端路径。
-- 不自动展开远端 `~` 或环境变量，不隐式创建父目录。说明这项路径要求，并明确报错。
-- 本地路径以 MCP 进程账号权限访问，无额外工作区沙箱；不沿用 qizhihe 的逻辑路径约束。
-- 默认禁止覆盖，不能依赖“先判断不存在再普通创建”实现覆盖保护。目标为目录或符号链接时拒绝写入。
-- 下载先写同目录临时文件，完整传输成功后发布到目标；失败清理临时文件，原目标保持可用。覆盖与禁止覆盖语义在 Windows 上也需要验证，不将 Unix 特定技巧直接当作跨平台保证。
-- 上传失败可能留下远端部分文件，在结果中如实说明；首版无需承诺原子上传。
-- 实际传输过程中持续限制字节数，不仅依赖传输前文件大小。
-- 传输完成须处理关闭文件时出现的错误，不能在远端文件尚未成功关闭时报告成功。
-- 返回 `server_id`、`local_path`、`remote_path`、`bytes_transferred` 和耗时；失败时保留必要的传输进度与状态说明。
+| 阶段 | 工作 | 验证出口 |
+| --- | --- | --- |
+| 基线与依赖 | 行为与启动基线，SDK、SSH、known_hosts、安装验证 | 关键选型有证据，缺口明确 |
+| TS 基础 | 工具链、配置、错误、版本、stdio、ssh_list | 编译入口初始化、列表与配置测试通过 |
+| SSH 信任 | 认证、known_hosts、连接生命周期 | 认证、信任、握手超时取消通过 |
+| 命令执行 | exec、配额、UTF-8、退出状态 | 正常和中断输出测试通过 |
+| 文件传输 | 上传下载、大小限制、排他与临时发布 | 往返、并发、失败和取消通过 |
+| 分发与清理 | 切换 bin、版本与打包，移除 Go 和平台机制 | 单包隔离安装可用，开发测试脱离 Go |
+| CI 与发布 | 原生矩阵、单产物、OIDC | 本地流程与发布恢复测试通过 |
+| 文档与版本 | README、AGENTS.md、0.2.0 日志、版本、锁文件 | 文档与最终实现一致，检查通过 |
 
-## 6. Go MCP 与进程生命周期
+提交遵循 Conventional Commits，type/scope 英文小写，描述与正文简体中文。示例可按真实增量调整：
 
-使用官方 `github.com/modelcontextprotocol/go-sdk/mcp`，以 `mcp.StdioTransport` 运行，SDK 负责协议和 Schema 相关能力，不手写 JSON-RPC 或 SSH/SFTP 协议。
+1. `build(ts): 添加 TypeScript 编译与测试入口`
+2. `refactor(config): 将服务器配置解析迁移到 TypeScript`
+3. `refactor(ssh): 迁移认证与主机信任校验`
+4. `refactor(ssh): 迁移命令执行与取消处理`
+5. `refactor(sftp): 迁移文件传输与覆盖保护`
+6. `build(npm)!: 切换为单包 JavaScript 分发并移除 Go`
+7. `ci: 改为 JavaScript 原生验证与单包发布`
+8. `build(release): 准备 0.2.0 版本与迁移日志`
 
-- 本机 stdout 专用于 MCP 消息。启动信息、日志、诊断写 stderr，远端输出封装进工具结果。
-- 不提供 HTTP/SSE 监听、Web UI、数据库、动态新增服务器工具或后台守护进程。
-- stdin EOF、终止信号和上下文取消时及时清理连接与子任务，正常退出。
-- 程序可提供 `--version` 用于 CLI 检查；普通 MCP 启动不能输出 banner。MCP server info 同样报告构建版本。
-- 不记录完整命令、命令输出或整份工具参数作为默认诊断日志，这些内容也可能含秘密。
-- 可采用 `cmd/ssh-mcp`、`internal/config`、`internal/sshclient`、`internal/tools` 的适度结构，保持业务独立，不为四个工具引入插件框架。
-- Go 使用兼容所选官方 SDK 和依赖的受支持版本，CI 从 go.mod 读取。交接时本机 Go 为 1.23.12，不能假设它能直接编译当前 SDK；按项目声明使用 Go 自动工具链或明确说明实际要求，不擅自改全局用户配置。
+分发变化需在相关提交正文中说明不再提供独立 Go 二进制。根版本与对应日志放在同一个发布准备提交，锁文件有变化时一并提交。
 
-## 7. npm 与六平台二进制
+每次提交前检查 diff、暂存区和必要验证，不带入用户改动或敏感文件。失败先修复再提交，不用占位、跳过断言或 mock 结果冒充集成验证。不自动 amend、squash 或改写历史。
 
-入口包为 `@sanjeever/ssh-mcp`，`bin` 命令为 `ssh-mcp`。启动器保持轻量，可使用 CommonJS 和 Node 内置模块，无需运行时第三方依赖。
+实施期间可临时保留 Go 作对照，最终删除 Go 源码、测试服务、go.mod/go.sum、旧 launcher 与专用测试及孤立构建文件。中间提交保持当前阶段适用检查可运行，不留下无故损坏的默认入口。
 
-| npm 平台包 | Go 目标 |
-| --- | --- |
-| `@sanjeever/ssh-mcp-darwin-arm64` | darwin/arm64 |
-| `@sanjeever/ssh-mcp-darwin-x64` | darwin/amd64 |
-| `@sanjeever/ssh-mcp-linux-arm64` | linux/arm64 |
-| `@sanjeever/ssh-mcp-linux-x64` | linux/amd64 |
-| `@sanjeever/ssh-mcp-win32-arm64` | windows/arm64 |
-| `@sanjeever/ssh-mcp-win32-x64` | windows/amd64 |
+## 10. 验收与启动性能
 
-- 平台包使用 package.json 的 os、cpu 字段筛选；Node 的 x64、win32 与 Go 的 amd64、windows 要显式映射。
-- 入口包通过 optionalDependencies 精确引用同版本的六个平台包，不使用 ^ 或 ~。
-- `CGO_ENABLED=0` 构建，Windows 文件为 `.exe`。macOS 分别提供两种架构，无需 universal binary。
-- 平台包元数据可以从统一矩阵和根版本生成，避免手工重复维护版本。
-- 根 package.json 的 version 为版本源；bump 同步入口包的六项依赖版本，构建生成平台包版本，Go 通过 ldflags 注入同一版本。开发构建可标记 dev。
-- npm 包均包含正确的仓库地址、许可证和必要说明，使用 files 白名单控制发布内容。发布包不得带凭据、测试临时文件或无关构建产物。
-- 入口包不携带全部平台二进制，不用 postinstall 或首次启动从 GitHub 下载二进制，不要求用户安装 Go。
-- 启动器用 spawn 和 stdio inherit 执行对应二进制，不通过 Shell；保留环境变量，传递 CLI 参数，处理启动失败、退出码和终止信号。
-- 可执行权限和 Windows 路径需要实际覆盖。平台不支持或 optionalDependencies 被省略时明确报错，不在错误路径偷偷下载。
-- 确保 npm pack 之后的入口包能找到匹配的平台包，不能仅在源码树中可用。保留版本完全一致的检查。
-- Node 开发依赖管理优先 pnpm；CI 使用冻结锁文件。发布使用 npm CLI。运行时最低 Node 版本根据实际 API 和测试声明，发布 CI 可使用 Node 26，不将发布环境要求误当成所有用户要求。
+使用 Node 内真实环回 SSH/SFTP 服务、临时目录和密钥，覆盖现有回归场景：
 
-## 8. 版本、日志与 GitHub Actions
+- 配置分组、下划线 ID、默认值、认证互斥、未知字段、凭据不泄露。
+- 密码、普通及加密私钥、认证失败；明文和哈希信任、撤销、strict、首次追加、并发冲突、符号链接及写入失败。
+- stdout/stderr、非零与信号退出、缺失退出码、超限后继续排空、多字节截断及非法 UTF-8。
+- TCP、握手、会话、执行与传输取消；总超时和握手上限分类；EOF、终止信号、活动连接清理。
+- 文件往返、禁止与显式覆盖、并发冲突、源增长、目录/符号链接拒绝、部分失败和取消保留原目标。
+- 真实 stdio 初始化、工具发现和调用、结构化错误、stdout 隔离。
+- 版本检查、空或缺失日志、发布错误传播、同版本恢复产物一致性。
+- 正常安装、禁用脚本、省略可选依赖、tarball 隔离安装，不借助源码或 Go。
 
-初始版本按 0.1.0 实现。仅接受 `vMAJOR.MINOR.PATCH` 正式标签，校验数字与 SemVer 规则，不因 on.push.tags 使用 v* 就允许任意 v 开头文本。
+性能以从启动到 MCP 初始化完成为终点，区分直接入口、缓存命中的 npx 与首次安装。迁移前后重复测量直接启动和缓存场景，报告样本数、中位数、较慢分位、Node/npm 版本与缓存条件。--version 耗时不能替代初始化耗时。
 
-版本工具需要提供明确的 bump 和 check 命令。借鉴 codex-deck：bump 前要求对应 `docs/releases/<version>.md` 存在且非空，再同步版本；check 验证标签、入口版本、平台依赖版本与日志一致。版本更新和对应日志放在同一个独立发布准备提交。
+首次安装单独报告包体积、依赖与下载成本，不把不稳定公网时间作为 CI 门槛。用本地 tarball 或预热缓存测新版本时，明确不等于公开 registry 首次安装；未发布不能声称公网 npx 已验证。
 
-每个版本的中文更新日志保存在 `docs/releases/<version>.md`，根据上一版本以来真实完成的用户可见变化编写。按内容保留“新增、优化、修复”等分组，不罗列空分组、不原样堆放 commit message，不把尚未验证的目标写成已完成。0.1.0 日志描述实际交付能力。
+最终执行类型检查、构建、完整相关测试与打包验证，确认无必要 Go 依赖或平台包机制。检查通过后，仅因新改动、失败或关键前提变化重跑。纯文档变更检查内容与 diff，无需编译测试。
 
-建议提供两个工作流：
+## 11. 文档与交付
 
-1. `ci.yml`：main push 和 pull_request 触发，执行相关检查、测试和打包验证，不发布。
-2. `release.yml`：正式版本标签 push 触发，校验、测试、构建六平台、制作 GitHub 附件和 npm 包，再执行发布。
+- 同步 README 和项目 AGENTS.md，移除当前约束中的 Go、平台依赖、交叉编译和七包发布描述，写清 Node 单包使用、开发、测试、版本与发布入口。
+- 保留历史日志，编写 `docs/releases/0.2.0.md`，描述真实完成的迁移及二进制分发变化，不夸大性能或发布状态。
+- 本文是一次性交接输入，不要求与 README 和代码长期重复同步；长期约束以更新后的 AGENTS.md 为准。
+- 最终报告实际结果、验证、性能数据、小提交列表与工作区状态。
+- 区分本机验证、CI 配置、各平台实际运行和公网发布。未运行的 CI、未确认的 npm 配置和未发布状态如实列出。
 
-发布流程应满足：
-
-- 从标签提交构建，确保发布提交属于 main 的历史，校验版本和对应日志。
-- 发布前所有测试、六平台构建和本地包检查完成；将同一批构建产物用于 npm 和 GitHub 附件。
-- GitHub 附件命名使用 ssh-mcp、版本、平台和架构；Unix 使用 tar.gz，Windows 使用 zip，解压可直接得到对应可执行文件。另附 SHA256SUMS 供用户验证下载。
-- GitHub Release 正文直接读取 `docs/releases/<version>.md`，不用 GitHub 自动生成提交列表替代。
-- 可以先创建并填充 draft Release，依次发布六个平台 npm 包，再发布入口包；全部成功后公开 Release。不要在平台包未发布完时发布依赖它们的入口包。
-- GitHub 与 npm 没有跨服务事务，部分 npm 发布后失败时如实报告，不声称全流程原子完成，不自动 unpublish、移动标签或覆盖已发布版本。文档说明如何识别已完成步骤和安排恢复；如支持重跑，不能把任意发布错误视为“版本已存在”而吞掉。
-- 使用 GitHub-hosted runner 和 npm OIDC，发布 job 开启 id-token: write；GitHub Release job 按需拥有 contents: write，其余尽量 contents: read。
-- 并发控制以版本为单位，不因新标签进入而中断正在进行的公开发布。
-- Actions 和 npm CLI 版本根据实现时官方支持情况选定，不机械复制参考仓库旧版本，不依赖含糊的隐式环境前提。
-- 首版不实现预发布通道、自动决定版本号或根据提交自动打标签。
-
-### npm OIDC 首次准备
-
-在 README 的发布说明中写清七个包分别需要哪些配置，不假装写好 workflow 就已完成 npm 侧准备。
-
-- 需要拥有 `@sanjeever` scope 的发布权限。
-- 入口包和六个平台包均需具备可信发布者配置，身份对应 GitHub owner `Sanjeever`、repo `ssh-mcp`、workflow filename `release.yml`；若使用 GitHub environment，名称必须精确对应。
-- 需要允许直接 npm publish，不能配置成每次还需人工批准的 stage-only 发布后又承诺标签自动公开发布。
-- 核对实现时 npm 对首次创建新包、初始化和 OIDC 的实际支持。若需先人工发布创建包，使用真正构建的有效包并写清一次性步骤，不上传占位包；日常 workflow 仍使用 OIDC。
-- 初始化必须避免先人工发布 0.1.0 后，再让同版本标签 workflow 无条件重复发布。说明首次版本、后续版本或恢复路径如何衔接，不能承诺尚未验证的首发一键完成。
-- 在官方文档确认当前 Node/npm 最低版本、可信配置允许操作及生效条件，在文档注明实际要求。
-- 如本次实现没有真实 npm/GitHub 发布权限，交付完整可检查流程和初始化说明，清楚报告外部准备项；不要索要账号密码、私自读取令牌或绕过 OIDC 方案。
-
-## 9. 验证要求
-
-测试以可观察行为为中心，优先采用项目内启动的真实 SSH/SFTP 测试服务、临时密钥和临时目录。不连接用户真实服务器，不修改用户 ~/.ssh/known_hosts，不把 mock 当成真实远端或公网发布验证。
-
-最低覆盖：
-
-- 环境分组、下划线 ID、字段后缀、默认值、认证互斥、未知字段、配置错误不泄露凭据。
-- 密码、普通私钥和加密私钥认证；认证失败能正确报告。
-- known_hosts 已有明文及哈希记录、非默认端口、首次自动追加、缺少换行、密钥变化拒绝、strict 未知主机拒绝；保留原内容与权限，写入失败明确报错。
-- exec 的 stdout/stderr、非零退出码、超时和取消、无法取得退出码、输出截断后仍能完成且不会死锁。
-- SFTP 文件往返内容一致、默认禁止覆盖、显式覆盖、目录或符号链接拒绝、大小限制、失败下载不损坏原目标、取消能结束。
-- 通过真实 stdio 子进程完成 MCP 初始化、工具列表和调用；普通日志不污染 stdout，stdin 关闭后进程能退出。
-- Node 启动器的平台映射、参数和标准流传递、错误与退出行为；使用 node:test 等现有标准能力，避免为小启动器引入测试框架。
-- 版本工具的 bump/check、空日志拒绝且不部分改写版本、六个平台元数据和依赖版本同步。
-- 对本机真实平台执行 npm pack 后的隔离安装与 MCP 启动，使用本地打包的平台包解析依赖，不能依赖尚未存在的公开版本。不得声称本地安装 tarball 等同公开 registry 上的 npx 已验证。
-
-运行 Go 格式、go vet、go test（可行时使用 race）及必要 Node 测试。CI 至少安排 macOS、Linux、Windows 原生测试和六目标交叉编译；能安排的 arm64 原生验证可增加，但必须区分真实运行和交叉编译。不能把构建通过写成六个平台均已实际运行。
-
-纯文档变更检查内容、链接和 diff，无需重复编译。后续发生新改动或失败才重复相关验证。具体无法运行的检查和外部验证限制要如实记录在最终交付说明中。
-
-## 10. 文档与小步提交
-
-实现开始时创建简体中文 AGENTS.md，记录稳定约束、版本来源、文档语言、提交约定、发布与授权边界。README.md 提供用途、要求、npx 配置示例、多服务器及两种认证、主机信任策略、四工具、开发与发布入口。尽量通过 README 和版本日志完成必要说明，只有内容确需独立维护时再拆文档，不建立空目录和重复规范。
-
-本文 handoff.md 是交接输入，可纳入首次文档提交；后续代码事实以代码和测试为准，长期约束以 AGENTS.md 为准，用户入口以 README 为准，不要求长期同步多份实现清单。
-
-本次接手任务已授权实现过程中创建本地小提交。按实际功能边界划分，每个提交保持完整、可检查，并运行与该增量直接相关的验证。不要最后一次性提交全部实现，也不要机械按每个文件拆分。
-
-以下是可调整的提交顺序和中文示例：
-
-1. `docs: 记录项目约定与实现交接`。
-2. `feat(config): 支持多服务器环境变量配置`，包含对应测试和所需模块初始化。
-3. `feat(ssh): 支持认证与主机密钥校验`，包含对应测试。
-4. `feat(ssh): 支持远端命令与文件传输`，包含对应测试。
-5. `feat(mcp): 通过 stdio 提供四个 SSH 工具`，包含协议与生命周期验证。
-6. `build(npm): 添加六平台二进制包与启动器`，包含本地打包验证。
-7. `ci: 添加持续集成与标签发布流程`。
-8. `docs: 完善使用说明与首次发布步骤`。
-9. `build(release): 准备 0.1.0 版本与更新日志`。
-
-提交前检查暂存区和 diff，不带入密钥、密码、本地路径配置或无关文件。修复新增问题时继续做对应的小提交，不自动改写已经提交的历史。
-
-当前任务授权实现、本地构建、测试、打包和本地提交；实际 git push、创建或推送发布标签、GitHub Release、npm 发布及账户设置变更属于外部操作，需要用户另行授权。交付可审阅实现和完整发布步骤后再处理真实发布，不因为缺少发布授权而停下已授权的实现工作。
-
-## 11. 完成交付
-
-完成后报告实际实现、验证证据、已创建的小提交、工作区状态，以及 npm OIDC 首次准备或平台实际运行中仍需完成的外部步骤。
-
-交付物至少包含可构建的 Go MCP、四工具及相关测试、六平台 npm 打包与启动器、CI 和标签发布工作流、版本工具、0.1.0 中文日志、README.md、AGENTS.md、MIT LICENSE。正常 npx 运行不依赖用户手动安装 Go，不添加新的常驻服务或配置数据库。
+完成标准：0.2.0 四个工具及原有契约通过验证；单个 npm 包可安装运行；开发、构建、测试和分发脱离 Go；CI、版本与发布流程完成单包改造；必要文档与小提交齐全。实际外部发布不属于本次本地实现完成条件。
 
 ## 12. 官方资料入口
 
-实现前核对所选依赖当前稳定 API，使用官方资料：
+实施时核对所选稳定版本的 Node 要求、协议兼容性与 API：
 
-- MCP Go SDK：<https://github.com/modelcontextprotocol/go-sdk>。
-- SSH：<https://pkg.go.dev/golang.org/x/crypto/ssh>。
-- known_hosts：<https://pkg.go.dev/golang.org/x/crypto/ssh/knownhosts>。
-- SFTP：<https://pkg.go.dev/github.com/pkg/sftp>，选择稳定主版本并按对应 API 实现，不混用不同主版本示例。
-- npm 包字段：<https://docs.npmjs.com/cli/v11/configuring-npm/package-json/>。
+- MCP TypeScript SDK：<https://github.com/modelcontextprotocol/typescript-sdk>。
+- ssh2：<https://github.com/mscdex/ssh2>。
+- TypeScript 模块：<https://www.typescriptlang.org/docs/handbook/modules/reference.html>。
+- Zod：<https://zod.dev/>。
+- Node 测试：<https://nodejs.org/api/test.html>。
+- Node 流与文件：<https://nodejs.org/api/stream.html>、<https://nodejs.org/api/fs.html>。
+- npm 包字段：<https://docs.npmjs.com/cli/configuring-npm/package-json/>。
+- npm 执行与缓存：<https://docs.npmjs.com/cli/commands/npm-exec/>。
 - npm OIDC：<https://docs.npmjs.com/trusted-publishers/>。
-- Node 子进程：<https://nodejs.org/api/child_process.html>。
 - GitHub Release CLI：<https://cli.github.com/manual/gh_release_create>。
