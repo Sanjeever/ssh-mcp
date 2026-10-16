@@ -10,10 +10,14 @@ import { verifyHost } from './known-hosts.js';
 const { Client: SSHClient, utils } = ssh2;
 
 export class Connection {
-  constructor(readonly client: Client, readonly signal: AbortSignal) {}
+  closed = false;
+  constructor(readonly client: Client, readonly signal: AbortSignal) { client.once('close', () => { this.closed = true; }); }
   wait<T>(start: (done: (error: Error | undefined | null, value: T) => void) => void, source?: EventEmitter): Promise<T> {
     return new Promise((resolve, reject) => {
+      let settled = false;
       const finish = (error?: Error | null, value?: T) => {
+        if (settled) return;
+        settled = true;
         this.signal.removeEventListener('abort', abort);
         this.client.off('close', closed);
         this.client.off('error', failed);
@@ -25,6 +29,7 @@ export class Connection {
       const closed = () => finish(new SSHError('ssh_error', 'SSH 连接中断，远端状态可能不确定'));
       const failed = () => closed();
       if (this.signal.aborted) { abort(); return; }
+      if (this.closed) { closed(); return; }
       this.signal.addEventListener('abort', abort, { once: true });
       this.client.once('close', closed);
       this.client.once('error', failed);
@@ -33,7 +38,7 @@ export class Connection {
       try { start(finish); } catch (error) { finish(error as Error); }
     });
   }
-  close() { this.client.destroy(); }
+  close() { this.closed = true; this.client.destroy(); }
 }
 
 export async function dial(server: Readonly<ServerConfig>, config: Config, signal: AbortSignal, deadline = Infinity): Promise<Connection> {

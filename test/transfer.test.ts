@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { dial } from '../src/ssh/client.js';
 import { transfer, copyLimited, MAX_TRANSFER_BYTES } from '../src/ssh/transfer.js';
+import type { TransferResult } from '../src/ssh/transfer.js';
 import { operationSignal } from '../src/errors.js';
 import { startSSH } from './helpers/ssh-server.js';
 import { sftpSession, type SFTPOptions } from './helpers/sftp-session.js';
@@ -35,6 +36,19 @@ test('SFTP 往返、排他创建、显式覆盖和类型校验', async t => {
   for (const direction of ['upload', 'download'] as const) {
     await assert.rejects(s.run(direction, join(s.root, 'symlink'), '/payload', true), { code: 'ssh_transfer_invalid' });
     await assert.rejects(s.run(direction, direction === 'upload' ? local : target, '/symlink', true), { code: 'ssh_transfer_invalid' });
+  }
+});
+test('原子上传扩展、关闭、元数据和清理失败时保留旧目标', async t => {
+  for (const options of [{}, { failClose: true }, { failSetstat: true }, { failUnlink: true }]) {
+    const s = await fixture(t, options), source = join(s.root, 'source');
+    writeFileSync(source, '新内容'); writeFileSync(join(s.root, 'payload'), '旧内容');
+    const connection = await dial(s.config, { servers: new Map(), knownHosts: join(s.root, 'known_hosts'), hostKeyPolicy: 'accept_new' }, new AbortController().signal);
+    const result: TransferResult = { bytes_transferred: 0 };
+    try { await assert.rejects(transfer(connection, 'upload', source, '/payload', true, result, undefined, { atomic: true }), error => error instanceof Error && 'code' in error && error.code === 'ssh_transfer_failed'); }
+    finally { connection.close(); }
+    assert.equal(result.publication_state, 'not_published'); assert.equal(result.cleanup_pending, !!options.failUnlink);
+    assert.equal(readFileSync(join(s.root, 'payload'), 'utf8'), '旧内容');
+    assert.equal(readdirSync(s.root).some(name => name.startsWith('.ssh-upload-')), !!options.failUnlink);
   }
 });
 test('并发禁止覆盖与发布前冲突保护', async t => {

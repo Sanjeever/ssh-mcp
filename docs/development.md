@@ -22,6 +22,8 @@ pnpm install --frozen-lockfile --ignore-scripts
 
 测试使用临时目录、临时密钥、临时 known_hosts 和 Node 环回 SSH/SFTP 服务，不连接真实服务器。发布恢复单元测试隔离 npm/GitHub 外部边界，其结果不代表真实发布验证。
 
+独立 OpenSSH 测试采用临时 `sshd`、密钥及信任文件，验证认证、退出状态、标准输入与原子 SFTP 发布。Unix 已安装 OpenSSH 时可执行 `SSH_MCP_TEST_OPENSSH=1 node --import=tsx --test test/openssh.test.ts`。普通 `pnpm test` 显式跳过此环境测试；CI 独立 job 必须执行。Linux 若需以 root 启动测试 daemon，配置 `SSH_MCP_TEST_SSHD_SUDO=1`，需要无交互 sudo；不修改系统 sshd 配置或服务。
+
 包内文件白名单由 `package.json` 定义，并由 [pack.ts](../scripts/pack.ts) 检查。构建生成 `dist/THIRD_PARTY_NOTICES.txt`，保留内嵌依赖许可；不要手工维护生成文件或在文档重复完整包文件清单。
 
 ### CI 产物

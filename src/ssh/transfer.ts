@@ -8,7 +8,8 @@ import { SSHError, interrupted, failureReason } from '../errors.js';
 import type { OperationContext } from '../errors.js';
 
 export const MAX_TRANSFER_BYTES = 128 * 1024 * 1024;
-export interface TransferResult { bytes_transferred: number }
+export interface TransferResult { bytes_transferred: number; publication_state?: 'not_published' | 'unknown' | 'published'; temporary_path?: string; cleanup_pending?: boolean }
+export interface TransferOptions { atomic?: boolean }
 const failed = (message: string) => new SSHError('ssh_transfer_failed', message);
 const invalid = () => new SSHError('ssh_transfer_invalid', '传输源必须是可访问的单个普通文件，目标不能是目录或符号链接，源文件不能超过 128 MiB');
 export function validatePaths(local: string, remote: string) {
@@ -38,9 +39,11 @@ export async function copyLimited(read: (buffer: Buffer, position: number) => Pr
   }
 }
 
-export async function transfer(connection: Connection, direction: 'upload' | 'download', local: string, remote: string, overwrite: boolean, result: TransferResult, context: OperationContext = { phase: 'open', operation_state: 'not_started' }) {
+export async function transfer(connection: Connection, direction: 'upload' | 'download', local: string, remote: string, overwrite: boolean, result: TransferResult, context: OperationContext = { phase: 'open', operation_state: 'not_started' }, options: TransferOptions = {}) {
   validatePaths(local, remote);
-  let file: FileHandle | undefined, sftp: SFTPWrapper | undefined, handle: Buffer | undefined, temp: string | undefined;
+  const atomic = direction === 'upload' && options.atomic === true;
+  if (atomic) result.publication_state = 'not_published';
+  let file: FileHandle | undefined, sftp: SFTPWrapper | undefined, handle: Buffer | undefined, temp: string | undefined, remoteTemp: string | undefined, existing: Stats | undefined, sftpClosed = false;
   let failure: unknown;
   try {
     context.phase = 'open';
@@ -55,10 +58,10 @@ export async function transfer(connection: Connection, direction: 'upload' | 'do
     sftp = await connection.wait<SFTPWrapper>(done => connection.client.sftp(done));
     // 保持 error 监听，连接关闭后的子系统错误不会成为未处理事件。
     sftp.on('error', () => {});
+    sftp.once('close', () => { sftpClosed = true; });
     const files = sftp;
     const wait = <T>(start: (done: (error: Error | undefined | null, value: T) => void) => void) => connection.wait(start, files);
     if (direction === 'upload') {
-      let existing: Stats | undefined;
       try { existing = await wait<Stats>(done => files.lstat(remote, done)); }
       catch (error) { if ((error as { code?: number }).code !== 2) throw error; }
       if (existing) {
@@ -66,11 +69,24 @@ export async function transfer(connection: Connection, direction: 'upload' | 'do
         if (!overwrite) throw new SSHError('ssh_target_exists', '远端目标已存在，覆盖需要 overwrite=true');
       }
       context.operation_state = 'may_have_started';
-      handle = await wait<Buffer>(done => files.open(remote, overwrite ? 'w' : 'wx', done));
+      if (atomic) {
+        remoteTemp = remote.slice(0, remote.lastIndexOf('/') + 1) + `.ssh-upload-${randomUUID()}`;
+        result.temporary_path = remoteTemp; result.cleanup_pending = true;
+      }
+      handle = await wait<Buffer>(done => {
+        if (atomic) files.open(remoteTemp!, 'wx', 0o600, done);
+        else files.open(remote, overwrite ? 'w' : 'wx', done);
+      });
       context.phase = 'write';
       const target = handle, source = file!;
       await copyLimited(async (buffer, position) => (await source.read(buffer, 0, buffer.length, position)).bytesRead,
         (buffer, position) => wait<void>(done => files.write(target, buffer, 0, buffer.length, position, done)), result, connection.signal);
+      if (atomic && existing) {
+        context.phase = 'metadata';
+        const current = await wait<Stats>(done => files.fstat(target, done));
+        if (current.uid !== existing.uid || current.gid !== existing.gid) await wait<void>(done => files.fsetstat(target, { uid: existing!.uid, gid: existing!.gid }, done));
+        await wait<void>(done => files.fsetstat(target, { mode: existing!.mode & 0o777 }, done));
+      }
     } else {
       const info = await wait<Stats>(done => files.lstat(remote, done));
       if (!info.isFile() || info.size > MAX_TRANSFER_BYTES) throw invalid();
@@ -99,6 +115,22 @@ export async function transfer(connection: Connection, direction: 'upload' | 'do
     await wait<void>(done => files.close(remoteHandle, done));
     await file!.close(); file = undefined;
     if (connection.signal.aborted) throw interrupted(connection.signal);
+    if (atomic) {
+      context.phase = 'publish'; result.publication_state = 'unknown';
+      try {
+        await wait<void>(done => {
+          try {
+            if (overwrite) files.ext_openssh_rename(remoteTemp!, remote, done);
+            else files.ext_openssh_hardlink(remoteTemp!, remote, done);
+          } catch { done(new SSHError('ssh_transfer_failed', '服务器不支持原子发布所需的 SFTP 扩展', { reason: 'unsupported' }), undefined); }
+        });
+      } catch (error) {
+        if (error instanceof SSHError && error.details.reason === 'unsupported' || typeof (error as { code?: unknown })?.code === 'number') result.publication_state = 'not_published';
+        throw error;
+      }
+      result.publication_state = 'published'; context.operation_state = 'completed';
+      if (overwrite) { remoteTemp = undefined; delete result.temporary_path; result.cleanup_pending = false; }
+    }
     if (direction === 'download') {
       context.phase = 'publish';
       await localTarget(local, overwrite);
@@ -110,9 +142,23 @@ export async function transfer(connection: Connection, direction: 'upload' | 'do
   } catch (error) {
     failure = connection.signal.aborted ? interrupted(connection.signal) : error instanceof SSHError ? error : failed(direction === 'upload' ? 'SFTP 上传未完成；无法读取源或创建、写入及关闭目标，远端可能遗留部分文件，请检查后再操作' : 'SFTP 下载未完成或无法发布目标文件，原目标未替换；请检查权限、目标冲突及硬链接支持');
     if (failure instanceof SSHError) failure = new SSHError(failure.code, failure.message, { reason: failureReason(error), ...failure.details });
-    connection.close();
   } finally {
     if (file) { try { await file.close(); } catch { if (!failure) failure = failed('本地文件关闭失败'); } }
+    if (handle && sftp && !sftpClosed && !connection.closed && !connection.signal.aborted) {
+      try { await connection.wait<void>(done => sftp!.close(handle!, done), sftp); }
+      catch { if (!failure) failure = failed('远端文件关闭失败'); }
+    }
+    if (remoteTemp && sftp) {
+      if (!sftpClosed && !connection.closed && !connection.signal.aborted) {
+        try {
+          await connection.wait<void>(done => sftp!.unlink(remoteTemp!, done), sftp);
+          result.cleanup_pending = false; delete result.temporary_path;
+        } catch (error) {
+          if ((error as { code?: number }).code === 2) { result.cleanup_pending = false; delete result.temporary_path; }
+          else if (!failure) failure = new SSHError('ssh_transfer_failed', '目标已发布，但上传临时文件清理失败', { phase: 'cleanup', operation_state: 'completed', reason: failureReason(error) });
+        }
+      } else if (!failure) failure = failed('上传临时文件未清理，请检查 temporary_path');
+    }
     sftp?.end();
     if (temp) {
       try { await unlink(temp); }

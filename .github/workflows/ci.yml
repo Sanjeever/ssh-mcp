@@ -40,6 +40,32 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+  openssh:
+    name: 独立 OpenSSH 兼容性
+    needs: build
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '26'
+          package-manager-cache: false
+      - uses: pnpm/action-setup@v6
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+      - uses: actions/download-artifact@v8
+        with:
+          name: release-assets
+          path: dist
+      - name: 安装测试服务端
+        run: sudo apt-get update && sudo apt-get install --yes openssh-server && sudo mkdir -p /run/sshd
+      - name: 临时密钥、独立 sshd 与 SFTP 扩展
+        env:
+          SSH_MCP_TEST_OPENSSH: '1'
+          SSH_MCP_TEST_SSHD_SUDO: '1'
+        run: node --import=tsx --test test/openssh.test.ts
+
   native:
     name: 原生验证 ${{ matrix.target }} Node ${{ matrix.node }}
     needs: build

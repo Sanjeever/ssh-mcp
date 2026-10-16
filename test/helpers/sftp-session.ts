@@ -12,6 +12,8 @@ export interface SFTPOptions {
   statSize?: number;
   failReadAt?: number;
   failClose?: boolean;
+  failSetstat?: boolean;
+  failUnlink?: boolean;
   hangRead?: boolean;
   hangWrite?: boolean;
 }
@@ -44,6 +46,14 @@ export function sftpSession(root: string, options: SFTPOptions = {}) {
     });
     sftp.on('LSTAT', (id, path) => stat(id, done => fs.lstat(local(path), done)));
     sftp.on('FSTAT', (id, handle) => stat(id, done => fs.fstat(descriptor(handle), done)));
+    sftp.on('FSETSTAT', (id, handle, attrs) => {
+      if (options.failSetstat) { sftp.status(id, 3); return; }
+      const fd = descriptor(handle);
+      if (attrs.mode !== undefined) fs.fchmod(fd, attrs.mode, error => status(id, error));
+      else if (attrs.uid !== undefined && attrs.gid !== undefined) fs.fchown(fd, attrs.uid, attrs.gid, error => status(id, error));
+      else status(id);
+    });
+    sftp.on('REMOVE', (id, path) => { if (options.failUnlink) sftp.status(id, 3); else fs.unlink(local(path), error => status(id, error)); });
     sftp.on('READ', (id, handle, offset, length) => {
       if (options.hangRead) return;
       options.onRead?.(offset);

@@ -56,8 +56,8 @@
 | --- | --- | --- |
 | `ssh_list` | 无参数 | `servers` 数组，按 `server_id` 排序；含 `server_id`、`description`、`host`、`port`、`username`、`auth_type` |
 | `ssh_exec` | `server_id`、`command`，可选 `stdin`、`output_mode`、`timeout_seconds` | `server_id`、`stdout`、`stderr`、退出状态、时长与输出统计 |
-| `ssh_upload` | `server_id`、`local_path`、`remote_path`，可选 `overwrite`、`timeout_seconds` | `server_id`、`local_path`、`remote_path`、`bytes_transferred`、`duration_ms` |
-| `ssh_download` | 同上传 | 同上传 |
+| `ssh_upload` | `server_id`、`local_path`、`remote_path`，可选 `overwrite`、`atomic`、`timeout_seconds` | 路径、字节数、时长；原子模式增加发布与清理状态 |
+| `ssh_download` | `server_id`、`local_path`、`remote_path`，可选 `overwrite`、`timeout_seconds` | 路径、字节数、时长 |
 
 参数使用 snake_case，拒绝未知字段。`ssh_list` 不联网探测，不表示在线状态。远端调用总超时默认 180 秒，范围 1–3600 秒；TCP 连接与认证握手另有 15 秒上限，并受总超时约束。每次远端调用使用独立连接，结束后关闭。
 
@@ -80,6 +80,10 @@ stdout 最多保存 96 KiB，stderr 最多保存 32 KiB，分别排空和统计�
 默认 `overwrite=false`。上传以排他模式创建，下载以排他方式发布；目标已存在时拒绝，显式覆盖须传 `overwrite=true`。目录和符号链接目标拒绝。
 
 下载先写同目录临时文件，完整传输并成功关闭文件后才发布。禁止覆盖使用排他硬链接发布，要求本地文件系统支持硬链接，不支持时明确失败；显式覆盖使用系统重命名。发布前失败或取消保留原目标，临时文件清理失败会报告错误。上传失败可能遗留远端部分文件，须检查后处理。
+
+上传可设置 `atomic=true`，默认 `false`。原子模式先写远端同目录临时文件，再发布到目标；覆盖要求 `posix-rename@openssh.com` 扩展，禁止覆盖要求 `hardlink@openssh.com` 扩展。不支持时明确失败，不切换到直接写入。新文件采用 0600，覆盖保留普通 POSIX 权限位和 uid/gid，无法设置时在发布前失败。ACL、扩展属性与硬链接关系不保留；原子可见性不承诺断电持久性。
+
+原子上传返回 `publication_state`，取值为 `not_published`、`unknown` 或 `published`。发布请求发出但结果丢失时为 `unknown`，须检查远端；发布成功后清理失败，结果仍为 `published` 并返回错误。`cleanup_pending=true` 和 `temporary_path` 指出可能残留的临时文件。清理受调用超时约束，不自动重连。
 
 ### 结果、错误与取消
 
