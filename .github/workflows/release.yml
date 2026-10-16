@@ -36,7 +36,7 @@ jobs:
     uses: ./.github/workflows/ci.yml
 
   publish:
-    name: OIDC 发布七个 npm 包并公开 Release
+    name: OIDC 发布已验证单包并公开 Release
     needs: [validate, verify]
     runs-on: ubuntu-24.04
     permissions:
@@ -59,7 +59,7 @@ jobs:
           path: dist
       - name: 核对构建产物
         run: node scripts/release.mjs verify
-      - name: 创建或恢复 draft，按平台包到入口包的顺序发布，全部成功后公开
+      - name: 创建或恢复 draft，发布同一 tarball，成功后公开
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}

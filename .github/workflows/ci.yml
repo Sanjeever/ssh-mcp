@@ -10,8 +10,39 @@ permissions:
   contents: read
 
 jobs:
+  build:
+    name: 集中编译与单包准备
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '26'
+          package-manager-cache: false
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '26'
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - run: pnpm fetch --frozen-lockfile
+      - run: pnpm install --frozen-lockfile --offline --ignore-scripts
+      - run: pnpm typecheck
+      - run: pnpm build
+      - run: node scripts/release.mjs prepare
+      - run: node scripts/release.mjs verify
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-assets
+          path: dist/
+          if-no-files-found: error
+          retention-days: 14
+
   native:
     name: 原生验证 ${{ matrix.target }} Node ${{ matrix.node }}
+    needs: build
     strategy:
       fail-fast: false
       matrix:
@@ -36,81 +67,36 @@ jobs:
             node: '26'
           - os: ubuntu-24.04
             target: linux-x64
-            node: '22'
+            node: '22.0.0'
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - uses: actions/setup-go@v7
-        with:
-          go-version-file: go.mod
-          cache-dependency-path: go.sum
-      - uses: actions/setup-node@v7
-        with:
-          node-version: ${{ matrix.node }}
-          package-manager-cache: false
-      - uses: pnpm/action-setup@v6
-      - name: 生成平台元数据
-        run: node scripts/build.mjs metadata
-      - run: pnpm install --frozen-lockfile --offline --ignore-scripts
-      - name: 检查 Go 格式
-        shell: bash
-        run: test -z "$(gofmt -l cmd internal)"
-      - run: go vet ./...
-      - name: Go 测试与竞态检查
-        if: matrix.target != 'win32-arm64'
-        run: go test -race ./...
-      - name: Windows arm64 Go 测试
-        if: matrix.target == 'win32-arm64'
-        run: go test ./...
-      - run: pnpm test
-      - name: 构建本机二进制
-        env:
-          BUILD_TARGET: ${{ matrix.target }}
-        run: node scripts/build.mjs build "$env:BUILD_TARGET"
-        if: runner.os == 'Windows'
-      - name: 构建本机二进制
-        env:
-          BUILD_TARGET: ${{ matrix.target }}
-        run: node scripts/build.mjs build "$BUILD_TARGET"
-        if: runner.os != 'Windows'
-      - name: 验证本地 npm 安装与 MCP
-        run: pnpm pack:check
-
-  packages:
-    name: 六目标交叉编译与发布包检查
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-      - uses: actions/setup-go@v7
-        with:
-          go-version-file: go.mod
-          cache-dependency-path: go.sum
       - uses: actions/setup-node@v7
         with:
           node-version: '26'
           package-manager-cache: false
       - uses: pnpm/action-setup@v6
-      - run: node scripts/build.mjs metadata
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '26'
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - run: pnpm fetch --frozen-lockfile
       - run: pnpm install --frozen-lockfile --offline --ignore-scripts
-      - run: node scripts/build.mjs build all
-      - run: pnpm pack:check
-      - name: 安装发布归档工具
-        run: |
-          sudo apt-get update
-          sudo apt-get install --yes zip unzip
-      - name: 制作并检查七个 npm 包、六个归档与 SHA256SUMS
-        run: node scripts/release.mjs prepare
-      - run: node scripts/release.mjs verify
-      - uses: actions/upload-artifact@v7
+      - uses: actions/download-artifact@v8
         with:
           name: release-assets
-          path: |
-            dist/packages/*
-            dist/release/*
-            dist/release-manifest.json
-          if-no-files-found: error
-          retention-days: 14
+          path: dist
+      - name: 核对同一份待发布 tarball
+        run: node scripts/release.mjs verify
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ matrix.node }}
+          package-manager-cache: false
+      - name: 测试编译产物与真实 stdio
+        run: node --test test/*.test.mjs scripts/*.test.mjs
+      - name: 正常安装、禁用脚本及省略可选依赖
+        shell: bash
+        run: node scripts/pack-check.mjs dist/packages/*.tgz
