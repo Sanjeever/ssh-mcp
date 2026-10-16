@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { z } from 'zod';
+import { setTimeout as delay } from 'node:timers/promises';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { startSSH } from './helpers/ssh-server.js';
@@ -35,6 +36,17 @@ test('官方 SDK 客户端校验四工具的成功与失败输出 Schema', async
   assert.equal(read.isError, false); assert.equal(file.content, 'SDK 文件');
   const edit = await client.callTool({ name: 'ssh_edit_file', arguments: { server_id: 'test', remote_path: '/payload', old_text: 'SDK', new_text: '新版', expected_revision: file.revision } });
   assert.equal(failureOutput.parse(edit.structuredContent).error.code, 'ssh_transfer_failed');
+  const taskSchema = z.object({ task_id: z.string(), output_id: z.string(), status: z.string(), result: z.unknown().optional() });
+  const task = taskSchema.parse((await client.callTool({ name: 'ssh_exec_start', arguments: { server_id: 'test', command: 'ok' } })).structuredContent);
+  let snapshot = task;
+  for (let attempt = 0; !snapshot.result && attempt < 100; attempt++) {
+    await delay(10); snapshot = taskSchema.parse((await client.callTool({ name: 'ssh_task_status', arguments: { task_id: task.task_id } })).structuredContent);
+  }
+  assert.equal(snapshot.status, 'completed');
+  const saved = await client.callTool({ name: 'ssh_output', arguments: { output_id: task.output_id } });
+  assert.equal(z.object({ text: z.string() }).parse(saved.structuredContent).text, 'remote ok\n');
+  const canceled = await client.callTool({ name: 'ssh_task_cancel', arguments: { task_id: task.task_id } });
+  assert.equal(taskSchema.parse(canceled.structuredContent).status, 'completed');
   await client.close();
 });
 test('单文件入口支持普通及加密私钥与 ChaCha20 内嵌 WASM', async t => {

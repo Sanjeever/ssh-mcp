@@ -31,6 +31,18 @@ test('保存输出有容量、有效期和会话边界，分页不切断 UTF-8',
   assert.throws(() => store.read(id, 'stdout', 0, 256), { code: 'ssh_output_unknown' });
 });
 
+test('增量页等待尚未到齐的 UTF-8 字符，最终非法尾部可以消费', () => {
+  const store = new OutputStore(), id = store.create();
+  const character = Buffer.from('中');
+  store.append(id, 'stdout', character.subarray(0, 2));
+  const partial = store.read(id, 'stdout', 0, 256);
+  assert.equal(partial.text, ''); assert.equal(partial.next_offset, 0);
+  store.append(id, 'stdout', character.subarray(2));
+  assert.equal(store.read(id, 'stdout', partial.next_offset, 256).text, '中');
+  store.append(id, 'stdout', character.subarray(0, 2)); store.finish(id);
+  assert.equal(store.read(id, 'stdout', 3, 256).next_offset, 5);
+});
+
 test('真实 MCP 降低返回预算并分页取得被省略的输出，失败仍可读取', async t => {
   const s = await startSSH(t, { session: execSession });
   const p = startCLI(t, { SSH_MCP_SERVER_TEST_HOST: s.config.host, SSH_MCP_SERVER_TEST_PORT: String(s.config.port), SSH_MCP_KNOWN_HOSTS: join(s.root, 'known_hosts') });

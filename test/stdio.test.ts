@@ -11,8 +11,8 @@ test('真实 stdio 初始化、列表、严格参数与 EOF', async t => {
   const tools = (await p.request('tools/list').result).tools;
   assert(tools.some(tool => tool.name === 'ssh_list' && tool.outputSchema));
   for (const tool of tools) {
-    assert.equal(tool.annotations?.readOnlyHint, ['ssh_list', 'ssh_output', 'ssh_read_file', 'ssh_probe'].includes(tool.name));
-    assert.equal(tool.annotations?.destructiveHint, !['ssh_list', 'ssh_output', 'ssh_read_file', 'ssh_probe'].includes(tool.name));
+    assert.equal(tool.annotations?.readOnlyHint, ['ssh_list', 'ssh_output', 'ssh_read_file', 'ssh_probe', 'ssh_task_status'].includes(tool.name));
+    assert.equal(tool.annotations?.destructiveHint, !['ssh_list', 'ssh_output', 'ssh_read_file', 'ssh_probe', 'ssh_task_status'].includes(tool.name));
   }
   const list = await p.request('tools/call', { name: 'ssh_list', arguments: {} }).result;
   assert.deepEqual(serversOutput.parse(list.structuredContent).servers.map(s => s.server_id), ['a', 'test']);

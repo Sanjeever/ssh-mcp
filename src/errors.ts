@@ -6,6 +6,9 @@ export interface ErrorDetails extends Partial<OperationContext> { reason?: strin
 export class SSHError extends Error {
   constructor(public readonly code: string, message: string, public readonly details: ErrorDetails = {}) { super(message); }
 }
+export function operationError(error: unknown, context: OperationContext) {
+  return error instanceof SSHError ? { code: error.code, message: error.message, ...context, ...error.details } : { code: 'ssh_error', message: 'SSH 操作失败，请检查操作阶段与状态后再操作', ...context };
+}
 export function failureReason(error: unknown): string | undefined {
   const code = (error as { code?: unknown })?.code;
   if (code === 'EACCES' || code === 'EPERM' || code === 3) return 'permission_denied';

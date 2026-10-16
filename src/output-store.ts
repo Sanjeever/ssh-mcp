@@ -39,7 +39,7 @@ export class OutputStore {
     if (!entry) throw new SSHError('ssh_output_unknown', '输出 ID 不存在、已过期或属于其他 MCP 会话', { operation_state: 'not_started' });
     const saved = entry.streams[stream];
     if (offset > saved.used) throw new SSHError('ssh_input_invalid', 'offset 超过当前可读取字节数', { operation_state: 'not_started' });
-    const page = textPage(saved.data.subarray(0, saved.used), offset, maxBytes);
+    const page = textPage(saved.data.subarray(0, saved.used), offset, maxBytes, entry.expires !== undefined);
     return { output_id: id, stream, ...page, available_bytes: saved.used, total_bytes: saved.total, storage_truncated: saved.total > saved.used, finished: entry.expires !== undefined, eof: entry.expires !== undefined && page.next_offset === saved.used };
   }
   clear() { this.entries.clear(); }
@@ -49,10 +49,10 @@ export class OutputStore {
 }
 
 // 页边界不切断合法 UTF-8 字符；任意偏移落入续字节时从下一个字符开始。
-export function textPage(data: Buffer, offset: number, maxBytes: number) {
+export function textPage(data: Buffer, offset: number, maxBytes: number, finished = true) {
   let start = offset, end = Math.min(data.length, start + maxBytes);
   while (start < end && (data[start]! & 0xc0) === 0x80) start++;
-  if (end < data.length) {
+  if (end < data.length || !finished) {
     for (let index = Math.max(start, end - 3); index < end; index++) {
       if (data[index]! < 0xc2 || data[index]! > 0xf4) continue;
       try {
