@@ -34,8 +34,8 @@ export function sftpSession(root, options = {}) {
       });
     });
     sftp.on('WRITE', (id, handle, offset, data) => {
-      if (options.hangWrite) return;
       options.onWrite?.(offset);
+      if (options.hangWrite) return;
       fs.write(handles.get(handle.toString('hex')), data, 0, data.length, offset, error => status(id, error));
     });
     sftp.on('CLOSE', (id, handle) => {

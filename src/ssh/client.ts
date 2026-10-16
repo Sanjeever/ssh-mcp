@@ -53,6 +53,7 @@ export async function dial(server: Readonly<ServerConfig>, config: Config, signa
   } else credentials.password = server.password;
   return new Promise((resolve, reject) => {
     const client = new SSHClient(), socket = new Socket();
+    socket.setNoDelay(true);
     let ready = false, tcp = false, trustError: Error | undefined;
     const abort = () => {
       client.destroy(); socket.destroy();

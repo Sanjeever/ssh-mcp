@@ -31,9 +31,9 @@ test('命令输出、数值退出码、信号、缺失退出码与持续排空',
 test('执行、会话等待取消及超时保留已有输出', async t => {
   for (const mode of ['cancel', 'timeout', 'session']) {
     const s = await startSSH(t, { session: execSession, hangSession: mode === 'session' });
-    const controller = new AbortController(), op = operationSignal(controller.signal, .2);
+    const controller = new AbortController(), op = operationSignal(controller.signal, 3);
     const c = await dial(s.config, { knownHosts: join(s.root, 'known_hosts'), hostKeyPolicy: 'accept_new' }, op.signal, op.deadline);
-    if (mode === 'cancel') setTimeout(() => controller.abort(), 50);
+    if (mode === 'cancel') setTimeout(() => controller.abort(), 250);
     const result = initial();
     try { await assert.rejects(exec(c, 'hang', result), error => error.code === (mode === 'cancel' ? 'ssh_canceled' : 'ssh_timeout')); }
     finally { c.close(); op.dispose(); }

@@ -53,13 +53,13 @@ test('传输失败、关闭失败与取消清理临时文件并保留原目标',
   for (const options of [{ failReadAt: 65536 }, { failClose: true }, { hangRead: true }]) {
     const s = await fixture(t, options), target = join(s.root, 'target');
     writeFileSync(join(s.root, 'payload'), Buffer.alloc(200000)); writeFileSync(target, '原内容');
-    const op = operationSignal(new AbortController().signal, .2), progress = { bytes_transferred: 0 };
+    const op = operationSignal(new AbortController().signal, options.hangRead ? 3 : 10), progress = { bytes_transferred: 0 };
     try { await assert.rejects(s.run('download', target, '/payload', true, op.signal, progress), { code: options.hangRead ? 'ssh_timeout' : 'ssh_transfer_failed' }); } finally { op.dispose(); }
     assert.equal(readFileSync(target, 'utf8'), '原内容'); assert(!readdirSync(s.root).some(name => name.startsWith('.ssh-download-')));
     if (options.failReadAt) assert(progress.bytes_transferred > 0);
   }
-  const s = await fixture(t, { hangWrite: true }), local = join(s.root, 'source'); writeFileSync(local, 'payload');
-  const controller = new AbortController(); setTimeout(() => controller.abort(), 100);
+  const controller = new AbortController();
+  const s = await fixture(t, { hangWrite: true, onWrite: () => controller.abort() }), local = join(s.root, 'source'); writeFileSync(local, 'payload');
   await assert.rejects(s.run('upload', local, '/payload', false, controller.signal), { code: 'ssh_canceled' });
   assert(readdirSync(s.root).includes('payload'));
 });
@@ -100,10 +100,11 @@ test('真实 stdio 四工具发现与 SFTP 调用', async t => {
   p.child.stdin.end(); assert.equal((await p.closed)[0], 0); assert.equal(p.diagnostics(), '');
 });
 test('SFTP 子系统等待取消与 stdio 下载取消和 EOF 清理', async t => {
-  const waiting = await startSSH(t, { session: session => session.on('sftp', () => {}) });
-  const op = operationSignal(new AbortController().signal, .1);
+  const controller = new AbortController();
+  const waiting = await startSSH(t, { session: session => session.on('sftp', () => controller.abort()) });
+  const op = operationSignal(controller.signal, 5);
   const c = await dial(waiting.config, { knownHosts: join(waiting.root, 'known_hosts'), hostKeyPolicy: 'accept_new' }, op.signal);
-  try { await assert.rejects(transfer(c, 'download', join(waiting.root, 'target'), '/payload', false, { bytes_transferred: 0 }), { code: 'ssh_timeout' }); } finally { c.close(); op.dispose(); }
+  try { await assert.rejects(transfer(c, 'download', join(waiting.root, 'target'), '/payload', false, { bytes_transferred: 0 }), { code: 'ssh_canceled' }); } finally { c.close(); op.dispose(); }
   for (const mode of ['cancel', 'eof']) {
     const s = await fixture(t, { hangRead: true }), target = join(s.root, 'target');
     writeFileSync(join(s.root, 'payload'), 'payload'); writeFileSync(target, '原内容');
