@@ -1,12 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { registryState, publishPackage, validateManifest, publish } from './release.mjs';
+import { registryState, publishPackage, validateManifest, publish } from './release.js';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 
-const response = (status, value) => ({ status, stdout: Buffer.from(JSON.stringify(value)) });
+const response = (status: number, value: unknown) => ({ status, stdout: Buffer.from(JSON.stringify(value)) });
 test('单包恢复记录拒绝版本、包名、路径与产物摘要冲突', t => {
   const base = mkdtempSync(join(tmpdir(), 'ssh-release-')); t.after(() => rmSync(base, { recursive: true, force: true }));
   mkdirSync(join(base, 'docs/releases'), { recursive: true }); mkdirSync(join(base, 'dist/packages'), { recursive: true });
@@ -48,8 +48,8 @@ test('npm 失败保留 draft，恢复相同版本后才公开 Release', t => {
   const payload = Buffer.from('摘要测试产物'), filename = 'sanjeever-ssh-mcp-0.2.0.tgz', integrity = 'sha512-' + createHash('sha512').update(payload).digest('base64');
   writeFileSync(join(base, 'dist/packages', filename), payload);
   writeFileSync(join(base, 'dist/release-manifest.json'), JSON.stringify({ version: '0.2.0', package: { name: '@sanjeever/ssh-mcp', filename, integrity } }));
-  const actions = [], env = { GH_REPO: 'Sanjeever/ssh-mcp', GH_TOKEN: '合成测试凭据' };
-  const github = (command, args) => { assert.equal(command, 'gh'); actions.push(args); return args[0] === 'api' ? response(1, { status: '404' }) : response(0, {}); };
+  const actions: string[][] = [], env = { GH_REPO: 'Sanjeever/ssh-mcp', GH_TOKEN: '合成测试凭据' };
+  const github = (command: string, args: string[]) => { assert.equal(command, 'gh'); actions.push(args); return args[0] === 'api' ? response(1, { status: '404' }) : response(0, {}); };
   assert.throws(() => publish('v0.2.0', { base, env, github, registry: args => {
     if (args[0] === 'view') return response(1, { error: { code: 'E404' } });
     throw new Error('测试 npm 发布失败');
@@ -59,7 +59,7 @@ test('npm 失败保留 draft，恢复相同版本后才公开 Release', t => {
   publish('v0.2.0', { base, env, github: (command, args) => {
     actions.push(args); return args[0] === 'api' ? response(0, { draft: true }) : response(0, {});
   }, registry: args => { assert.equal(args[0], 'view'); return response(0, integrity); } });
-  assert(actions.some(args => args[1] === 'upload')); assert(actions.at(-1).includes('--draft=false'));
+  assert(actions.some(args => args[1] === 'upload')); assert(actions.at(-1)?.includes('--draft=false'));
   assert.throws(() => publish('v0.2.0', { base, env, github: () => response(0, { draft: false }), registry: () => assert.fail('不应查询 npm') }), /已公开/);
   assert.throws(() => publish('v0.2.0', { base, env, github: () => response(1, { status: '500' }), registry: () => assert.fail('不应查询 npm') }), /查询 GitHub Release 失败/);
 });

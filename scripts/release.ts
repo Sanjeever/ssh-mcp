@@ -1,16 +1,28 @@
 import assert from 'node:assert/strict';
-import { createHash } from 'node:crypto';
+import { createHash, type BinaryToTextEncoding } from 'node:crypto';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { root, run } from './process.mjs';
-import { npm } from './npm.mjs';
-import { pack } from './pack.mjs';
-import { check } from './version.mjs';
+import { root, run, type CommandResult, type CommandRunner, type RunOptions } from './process.js';
+import { npm, type NpmRunner } from './npm.js';
+import { pack } from './pack.js';
+import { check } from './version.js';
+import { z } from 'zod';
 
-const digest = (path, algorithm, encoding) => createHash(algorithm).update(readFileSync(path)).digest(encoding);
+const packageSchema = z.object({ name: z.string(), filename: z.string(), integrity: z.string() });
+const manifestSchema = z.object({ version: z.string(), package: packageSchema });
+type ReleasePackage = z.infer<typeof packageSchema>;
+type ReleaseManifest = z.infer<typeof manifestSchema>;
+interface PublishOptions {
+  base?: string;
+  env?: NodeJS.ProcessEnv;
+  github?: CommandRunner;
+  registry?: NpmRunner;
+}
+
+const digest = (path: string, algorithm: string, encoding: BinaryToTextEncoding) => createHash(algorithm).update(readFileSync(path)).digest(encoding);
 const manifestPath = join(root, 'dist/release-manifest.json');
-const capture = { stdio: ['ignore', 'pipe', 'pipe'] };
+const capture = { stdio: ['ignore', 'pipe', 'pipe'] } satisfies RunOptions;
 
 export function prepare(tag = `v${JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).version}`) {
   const version = check(root, tag);
@@ -23,7 +35,7 @@ export function prepare(tag = `v${JSON.parse(readFileSync(join(root, 'package.js
   console.log(`已准备 ${version} 的单个 npm tarball`);
 }
 
-export function validateManifest(manifest, base = root) {
+export function validateManifest(manifest: ReleaseManifest, base = root) {
   const version = check(base, `v${manifest.version}`);
   const p = manifest.package;
   assert.equal(p.name, '@sanjeever/ssh-mcp');
@@ -32,18 +44,20 @@ export function validateManifest(manifest, base = root) {
 }
 
 // 仅明确的 E404 表示版本尚不存在；网络、认证及其他错误原样阻止发布。
-export function registryState(result, expectedIntegrity) {
-  let data;
-  try { data = JSON.parse(result.stdout.toString()); } catch { throw new Error('无法解析 npm registry 响应，停止发布'); }
+export function registryState(result: CommandResult, expectedIntegrity: string) {
+  let data: unknown;
+  try { assert(result.stdout); data = JSON.parse(result.stdout.toString()); } catch { throw new Error('无法解析 npm registry 响应，停止发布'); }
   if (result.status === 0) {
     if (data !== expectedIntegrity) throw new Error('npm 已有同版本包与本次 tarball 不一致，停止发布；请核对已有产物并准备新版本');
     return 'identical';
   }
-  if (data?.error?.code === 'E404') return 'missing';
-  throw new Error(`查询 npm 版本失败：${data?.error?.code ?? result.status}，停止发布`);
+  const parsed = z.object({ error: z.object({ code: z.string().optional() }).optional() }).safeParse(data);
+  const code = parsed.success ? parsed.data.error?.code : undefined;
+  if (code === 'E404') return 'missing';
+  throw new Error(`查询 npm 版本失败：${code ?? result.status}，停止发布`);
 }
 
-export function publishPackage(pkg, version, runner = npm, base = root) {
+export function publishPackage(pkg: ReleasePackage, version: string, runner: NpmRunner = npm, base = root) {
   const view = runner(['view', `${pkg.name}@${version}`, 'dist.integrity', '--json', '--registry=https://registry.npmjs.org'], { ...capture, allowFailure: true });
   if (registryState(view, pkg.integrity) === 'identical') {
     console.log(`已核对并跳过相同产物 ${pkg.name}@${version}`);
@@ -53,15 +67,19 @@ export function publishPackage(pkg, version, runner = npm, base = root) {
   console.log(`已发布 ${pkg.name}@${version}`);
 }
 
-export function publish(tag, { base = root, env = process.env, github = run, registry = npm } = {}) {
+export function publish(tag: string | undefined, { base = root, env = process.env, github = run, registry = npm }: PublishOptions = {}) {
   const version = check(base, tag);
-  const manifest = JSON.parse(readFileSync(join(base, 'dist/release-manifest.json'), 'utf8'));
+  assert(tag);
+  const manifest = manifestSchema.parse(JSON.parse(readFileSync(join(base, 'dist/release-manifest.json'), 'utf8')));
   assert.equal(manifest.version, version); validateManifest(manifest, base);
   const repo = env.GH_REPO;
   if (repo !== 'Sanjeever/ssh-mcp' || !env.GH_TOKEN) throw new Error('发布需要正确的 GH_REPO 和工作流 GH_TOKEN');
   const existing = github('gh', ['api', `repos/${repo}/releases/tags/${tag}`], { ...capture, allowFailure: true });
   let data;
-  try { data = JSON.parse(existing.stdout.toString()); } catch { throw new Error('无法解析 GitHub Release 响应，停止发布'); }
+  try {
+    assert(existing.stdout);
+    data = z.object({ draft: z.boolean().optional(), status: z.union([z.string(), z.number()]).optional() }).parse(JSON.parse(existing.stdout.toString()));
+  } catch { throw new Error('无法解析 GitHub Release 响应，停止发布'); }
   const files = [join(base, 'dist/packages', manifest.package.filename)];
   if (existing.status === 0) {
     if (!data.draft) throw new Error('该版本 GitHub Release 已公开，请核对发布状态；不会覆盖公开版本');
@@ -79,7 +97,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   const [command, tag, ...rest] = process.argv.slice(2);
   if (rest.length) throw new Error('参数过多');
   if (command === 'prepare') prepare(tag);
-  else if (command === 'verify') validateManifest(JSON.parse(readFileSync(manifestPath, 'utf8')));
+  else if (command === 'verify') validateManifest(manifestSchema.parse(JSON.parse(readFileSync(manifestPath, 'utf8'))));
   else if (command === 'publish') publish(tag);
-  else throw new Error('用法：release.mjs prepare|verify|publish <v版本>');
+  else throw new Error('用法：release.ts prepare|verify|publish <v版本>');
 }

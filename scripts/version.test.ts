@@ -3,9 +3,10 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { bump, check, validVersion } from './version.mjs';
+import { bump, check, validVersion } from './version.js';
+import type { TestContext } from 'node:test';
 
-function fixture(t) {
+function fixture(t: TestContext) {
   const base = mkdtempSync(join(tmpdir(), 'ssh-version-')); t.after(() => rmSync(base, { recursive: true, force: true }));
   mkdirSync(join(base, 'docs/releases'), { recursive: true });
   writeFileSync(join(base, 'package.json'), JSON.stringify({ name: '@sanjeever/ssh-mcp', version: '0.1.1', dependencies: { ssh2: '1.17.0' } }));
@@ -16,7 +17,7 @@ test('单包 bump 与标签检查保留运行依赖', t => {
   const base = fixture(t); assert.equal(check(base, 'v0.1.1'), '0.1.1');
   writeFileSync(join(base, 'docs/releases/0.2.0.md'), '迁移 TypeScript。');
   bump(base, '0.2.0'); assert.equal(check(base, 'v0.2.0'), '0.2.0');
-  const pkg = JSON.parse(readFileSync(join(base, 'package.json')));
+  const pkg = JSON.parse(readFileSync(join(base, 'package.json'), 'utf8'));
   assert.deepEqual(pkg.dependencies, { ssh2: '1.17.0' }); assert.equal(pkg.optionalDependencies, undefined);
 });
 test('非法版本、标签、缺失、空或非中文日志不会部分改写版本', t => {

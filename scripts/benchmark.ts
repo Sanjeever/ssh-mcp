@@ -1,14 +1,16 @@
 import { spawn } from 'node:child_process';
 import { performance } from 'node:perf_hooks';
+import { resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 // 以 initialize 响应为终点；命令及参数由调用方提供，可测直接入口或预热后的 npx。
-export async function measure(command, args, samples = 30) {
-  const values = [];
+export async function measure(command: string, args: string[], samples = 30) {
+  const values: number[] = [];
   const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('SSH_MCP_')));
   Object.assign(env, { SSH_MCP_SERVER_BENCH_HOST: '192.0.2.1', SSH_MCP_SERVER_BENCH_USERNAME: 'bench', SSH_MCP_SERVER_BENCH_PASSWORD: 'unused' });
   for (let i = 0; i < samples; i++) {
     const start = performance.now();
-    await new Promise((resolve, reject) => {
+    await new Promise<void>((resolve, reject) => {
       const child = spawn(command, args, { env, stdio: ['pipe', 'pipe', 'pipe'] });
       const timer = setTimeout(() => { child.kill(); reject(new Error('初始化超时')); }, 10000);
       let output = '', diagnostic = '', initialized = false;
@@ -36,11 +38,12 @@ export async function measure(command, args, samples = 30) {
   }
   values.sort((a, b) => a - b);
   const middle = Math.floor(samples / 2);
-  const median = samples % 2 ? values[middle] : (values[middle - 1] + values[middle]) / 2;
-  return { samples, median_ms: +median.toFixed(2), p95_ms: +values[Math.ceil(samples * .95) - 1].toFixed(2), node: process.version, command, args };
+  const median = samples % 2 ? values[middle]! : (values[middle - 1]! + values[middle]!) / 2;
+  return { samples, median_ms: +median.toFixed(2), p95_ms: +values[Math.ceil(samples * .95) - 1]!.toFixed(2), node: process.version, command, args };
 }
 
-if (process.argv[1]?.endsWith('benchmark.mjs')) {
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const [command, ...args] = process.argv.slice(2);
+  if (!command) throw new Error('用法：benchmark.ts <命令> [参数...]');
   console.log(JSON.stringify(await measure(command, args), null, 2));
 }

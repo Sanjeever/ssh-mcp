@@ -31,8 +31,8 @@ jobs:
       - run: pnpm install --frozen-lockfile --offline --ignore-scripts
       - run: pnpm typecheck
       - run: pnpm build
-      - run: node scripts/release.mjs prepare
-      - run: node scripts/release.mjs verify
+      - run: node --import=tsx scripts/release.ts prepare
+      - run: node --import=tsx scripts/release.ts verify
       - uses: actions/upload-artifact@v7
         with:
           name: release-assets
@@ -90,13 +90,13 @@ jobs:
           name: release-assets
           path: dist
       - name: 核对同一份待发布 tarball
-        run: node scripts/release.mjs verify
+        run: node --import=tsx scripts/release.ts verify
       - uses: actions/setup-node@v7
         with:
           node-version: ${{ matrix.node }}
           package-manager-cache: false
       - name: 测试 TypeScript 模块与真实 stdio
-        run: node --import=tsx --test test/*.test.ts scripts/*.test.mjs
+        run: node --import=tsx --test test/*.test.ts scripts/*.test.ts
       - name: 正常安装、禁用脚本及省略可选依赖
         shell: bash
-        run: node --import=tsx scripts/pack-check.mjs dist/packages/*.tgz
+        run: node --import=tsx scripts/pack-check.ts dist/packages/*.tgz

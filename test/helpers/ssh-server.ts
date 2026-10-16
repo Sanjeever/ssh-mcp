@@ -5,7 +5,6 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import assert from 'node:assert/strict';
-import type { TestContext } from 'node:test';
 import type { Connection, ServerConfig as SSHServerConfig, Session } from 'ssh2';
 import type { ServerConfig } from '../../src/config.js';
 const { Server, utils } = ssh2;
@@ -22,7 +21,7 @@ interface SSHOptions {
   session?: (session: Session, client: Connection) => void;
 }
 
-export async function startSSH(t: Pick<TestContext, 'after'>, options: SSHOptions = {}) {
+export async function startSSH(t: { after: (fn: () => void | Promise<void>) => void }, options: SSHOptions = {}) {
   const root = mkdtempSync(join(tmpdir(), 'ssh-server-'));
   const keys = generateKeyPairSync('rsa', { modulusLength: 2048 });
   const privateKey = keys.privateKey.export({ type: 'pkcs1', format: 'pem' });

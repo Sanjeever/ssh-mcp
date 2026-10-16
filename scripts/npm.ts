@@ -1,9 +1,11 @@
 import { existsSync, realpathSync } from 'node:fs';
 import { delimiter, dirname, join } from 'node:path';
-import { run } from './process.mjs';
+import { run, type CommandResult, type RunOptions } from './process.js';
+
+export type NpmRunner = (args: string[], options?: RunOptions) => CommandResult;
 
 // 直接运行 npm CLI 的 JS 入口，避免 Windows .cmd 需要 Shell 解释。
-export function npm(args, options = {}) {
+export function npm(args: string[], options: RunOptions = {}) {
   const candidates = [join(dirname(process.execPath), 'node_modules/npm/bin/npm-cli.js')];
   for (const dir of (process.env.PATH ?? '').split(delimiter)) {
     if (process.platform !== 'win32' && existsSync(join(dir, 'npm'))) candidates.push(realpathSync(join(dir, 'npm')));

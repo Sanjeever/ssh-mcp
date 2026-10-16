@@ -5,10 +5,10 @@ import { fileURLToPath } from 'node:url';
 import { isBuiltin } from 'node:module';
 import { build as bundle } from 'esbuild';
 
-import { root } from './process.mjs';
+import { root } from './process.js';
 
-function notices(inputs) {
-  const packages = new Map();
+function notices(inputs: string[]) {
+  const packages = new Map<string, string>();
   for (const input of inputs) {
     if (!input.includes('node_modules/')) continue;
     let dir = dirname(resolve(root, input));
@@ -53,7 +53,8 @@ export async function build() {
   });
   const outputs = Object.values(result.metafile.outputs);
   assert.equal(outputs.length, 1, '发布构建必须生成单个 JavaScript 文件');
-  for (const dependency of outputs[0].imports) assert(dependency.external && isBuiltin(dependency.path), `发现未打包的运行依赖 ${dependency.path}`);
+  const output = outputs[0]; assert(output);
+  for (const dependency of output.imports) assert(dependency.external && isBuiltin(dependency.path), `发现未打包的运行依赖 ${dependency.path}`);
   writeFileSync(join(root, 'dist/THIRD_PARTY_NOTICES.txt'), notices(Object.keys(result.metafile.inputs)));
   chmodSync(join(root, 'dist/cli.js'), 0o755);
 }

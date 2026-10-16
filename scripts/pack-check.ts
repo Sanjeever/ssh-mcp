@@ -3,21 +3,21 @@ import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSyn
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { root } from './process.mjs';
-import { npm } from './npm.mjs';
-import { smoke } from './smoke.mjs';
-import { pack } from './pack.mjs';
+import { root } from './process.js';
+import { npm } from './npm.js';
+import { smoke } from './smoke.js';
+import { pack } from './pack.js';
 import { startSSH } from '../test/helpers/ssh-server.js';
 import { execSession } from '../test/helpers/exec-session.js';
 import { sftpSession } from '../test/helpers/sftp-session.js';
 
-export async function checkPack(tarball) {
+export async function checkPack(tarball?: string) {
   const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
   const temp = mkdtempSync(join(tmpdir(), 'ssh-mcp-pack-'));
-  const cleanup = [];
+  const cleanup: Array<() => void | Promise<void>> = [];
   try {
-    const ssh = await startSSH({ after: fn => cleanup.push(fn) }, { session: session => { execSession(session); sftpSession(ssh.root)(session); } });
-    const entry = tarball ? { path: resolve(tarball) } : pack(root, join(temp, 'tarballs'));
+    const ssh = await startSSH({ after: fn => { cleanup.push(fn); } }, { session: session => { execSession(session); sftpSession(ssh.root)(session); } });
+    const entry = tarball ? { path: resolve(tarball), info: undefined } : pack(root, join(temp, 'tarballs'));
     const cache = join(temp, 'cache');
     const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('SSH_MCP_') && !key.toLowerCase().startsWith('npm_config_')));
     Object.assign(env, { SSH_MCP_SERVER_SMOKE_HOST: ssh.config.host, SSH_MCP_SERVER_SMOKE_PORT: String(ssh.config.port), SSH_MCP_SERVER_SMOKE_USERNAME: ssh.config.username, SSH_MCP_SERVER_SMOKE_PASSWORD: ssh.config.password, SSH_MCP_KNOWN_HOSTS: join(temp, 'known_hosts') });
@@ -33,13 +33,14 @@ export async function checkPack(tarball) {
       const result = npm(['install', '--cache', cache, '--no-audit', '--no-fund', ...flags, entry.path], { cwd: install, env: installEnv, stdio: ['ignore', 'pipe', 'pipe'] });
       assert.equal(result.status, 0);
       const installed = join(install, 'node_modules/@sanjeever/ssh-mcp');
-      const meta = JSON.parse(readFileSync(join(installed, 'package.json')));
+      const meta = JSON.parse(readFileSync(join(installed, 'package.json'), 'utf8'));
       assert.equal(meta.version, pkg.version); assert.equal(meta.optionalDependencies, undefined); assert.equal(meta.bin['ssh-mcp'], 'dist/cli.js');
       assert.equal(meta.dependencies, undefined);
       assert.deepEqual(readdirSync(join(installed, 'dist')).sort(), ['THIRD_PARTY_NOTICES.txt', 'cli.js']);
-      const installedLock = JSON.parse(readFileSync(join(install, 'node_modules/.package-lock.json')));
+      const installedLock = JSON.parse(readFileSync(join(install, 'node_modules/.package-lock.json'), 'utf8'));
       assert.deepEqual(Object.keys(installedLock.packages), ['node_modules/@sanjeever/ssh-mcp']);
       const version = npm(['exec', '--offline', '--cache', cache, '--', 'ssh-mcp', '--version'], { cwd: install, env, stdio: ['ignore', 'pipe', 'pipe'] });
+      assert(version.stdout);
       assert.equal(version.stdout.toString().trim(), pkg.version);
       const source = join(install, 'source'), target = join(install, 'target'); writeFileSync(source, '隔离安装 SFTP 往返');
       const remote = `/payload-${index}`;

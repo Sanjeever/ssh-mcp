@@ -24,10 +24,12 @@ jobs:
         with:
           node-version: '26'
           package-manager-cache: false
+      - uses: pnpm/action-setup@v6
+      - run: pnpm install --frozen-lockfile --ignore-scripts
       - name: 核对版本与更新日志
         env:
           RELEASE_TAG: ${{ github.ref_name }}
-        run: node scripts/version.mjs check "$RELEASE_TAG"
+        run: node --import=tsx scripts/version.ts check "$RELEASE_TAG"
       - name: 确认标签提交已进入 main
         run: git merge-base --is-ancestor HEAD origin/main
 
@@ -53,15 +55,17 @@ jobs:
           package-manager-cache: false
       - name: 固定支持 OIDC 的 npm CLI
         run: npm install --global npm@11.20.0
+      - uses: pnpm/action-setup@v6
+      - run: pnpm install --frozen-lockfile --ignore-scripts
       - uses: actions/download-artifact@v8
         with:
           name: release-assets
           path: dist
       - name: 核对构建产物
-        run: node scripts/release.mjs verify
+        run: node --import=tsx scripts/release.ts verify
       - name: 创建或恢复 draft，发布同一 tarball，成功后公开
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ github.ref_name }}
-        run: node scripts/release.mjs publish "$RELEASE_TAG"
+        run: node --import=tsx scripts/release.ts publish "$RELEASE_TAG"

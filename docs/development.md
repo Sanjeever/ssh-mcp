@@ -16,13 +16,13 @@ pnpm install --frozen-lockfile --ignore-scripts
 
 ### 验证边界
 
-- `pnpm typecheck` 检查应用与测试类型；tsx 执行时不检查类型。`pnpm build` 生成单文件 ESM 入口与第三方许可文本，并检查外部导入边界。
-- `pnpm test` 使用 node:test。模块测试直接加载 `src/`，端到端与官方 SDK 客户端测试运行 `dist/cli.js`。测试覆盖配置、主机信任、执行与传输、取消与进程生命周期；具体场景以 `test/` 和 `scripts/*.test.mjs` 为准，不在文档维护用例数量。
+- `pnpm typecheck` 检查应用、测试与工程脚本类型；tsx 执行时不检查类型。`pnpm build` 生成单文件 ESM 入口与第三方许可文本，并检查外部导入边界。
+- `pnpm test` 使用 node:test。模块测试直接加载 `src/`，端到端与官方 SDK 客户端测试运行 `dist/cli.js`。测试覆盖配置、主机信任、执行与传输、取消与进程生命周期；具体场景以 `test/` 和 `scripts/*.test.ts` 为准，不在文档维护用例数量。
 - `pnpm pack:check` 实际打包，并在仓库外临时目录完成正常安装、禁用脚本和省略可选依赖三条路径，核对只有应用包，再验证 CLI、MCP 初始化、四工具调用与 SFTP 往返。Unix 正常安装限制 PATH，验证无需编译器。
 
 测试使用临时目录、临时密钥、临时 known_hosts 和 Node 环回 SSH/SFTP 服务，不连接真实服务器。发布恢复单元测试隔离 npm/GitHub 外部边界，其结果不代表真实发布验证。
 
-包内文件白名单由 `package.json` 定义，并由 [pack.mjs](../scripts/pack.mjs) 检查。构建生成 `dist/THIRD_PARTY_NOTICES.txt`，保留内嵌依赖许可；不要手工维护生成文件或在文档重复完整包文件清单。
+包内文件白名单由 `package.json` 定义，并由 [pack.ts](../scripts/pack.ts) 检查。构建生成 `dist/THIRD_PARTY_NOTICES.txt`，保留内嵌依赖许可；不要手工维护生成文件或在文档重复完整包文件清单。
 
 ### CI 产物
 
@@ -51,9 +51,9 @@ pnpm version:check "v$next_version"
 pnpm typecheck
 pnpm build
 pnpm test
-node scripts/release.mjs prepare
-node scripts/release.mjs verify
-node --import=tsx scripts/pack-check.mjs dist/packages/*.tgz
+node --import=tsx scripts/release.ts prepare
+node --import=tsx scripts/release.ts verify
+node --import=tsx scripts/pack-check.ts dist/packages/*.tgz
 ```
 
 `prepare` 默认使用根版本，也可传入与其一致的 `v<version>`。tarball 位于 `dist/packages/`，版本、文件名与完整性记录位于 `dist/release-manifest.json`。`verify` 核对版本、日志和 tarball 摘要，不执行安装测试。准备完成后不重新构建或重打包替换已验证产物；`pnpm build` 会清空 `dist/`。
@@ -62,9 +62,11 @@ node --import=tsx scripts/pack-check.mjs dist/packages/*.tgz
 
 ### 正式发布
 
-推送、发布标签、GitHub Release、npm 发布和账户配置须另行授权。`release.mjs publish` 执行外部写入，不能用作本地检查。
+推送、发布标签、GitHub Release、npm 发布和账户配置须另行授权。`release.ts publish` 执行外部写入，不能用作本地检查。
 
 [release.yml](../.github/workflows/release.yml) 由 `v*` 标签触发，校验正式版本、中文日志及标签提交已进入 main 历史，再复用 CI 完成原生与安装验证。发布 job 下载并核对原 tarball，通过 npm OIDC 发布。Node/npm 版本、权限和 environment 设置以该工作流为准。
+
+标签校验与发布 job 按锁文件安装开发依赖并禁用安装脚本，以执行 TypeScript 工程脚本。发布 job 不重新构建或打包，继续使用 CI 已验证的同一 tarball。
 
 发布前核对根包 `@sanjeever/ssh-mcp` 的 npm Trusted Publisher 与仓库 `Sanjeever/ssh-mcp`、工作流文件名 `release.yml` 及实际 environment 设置一致，并允许直接发布。当前工作流不使用 GitHub environment，对应配置应留空；账户配置是否完成须单独确认。外部配置要求参考 [npm 可信发布者文档](https://docs.npmjs.com/trusted-publishers/)。六个旧平台包不参与发布。
 
@@ -78,13 +80,13 @@ node --import=tsx scripts/pack-check.mjs dist/packages/*.tgz
 
 ## 启动性能测量
 
-[benchmark.mjs](../scripts/benchmark.mjs) 从进程启动测到 MCP initialize 响应，默认串行测量 30 次，输出中位数和 P95：
+[benchmark.ts](../scripts/benchmark.ts) 从进程启动测到 MCP initialize 响应，默认串行测量 30 次，输出中位数和 P95：
 
 ```sh
-node scripts/benchmark.mjs node dist/cli.js
-node scripts/benchmark.mjs npm exec --offline --yes --package=/绝对路径/包.tgz -- ssh-mcp
+node --import=tsx scripts/benchmark.ts node dist/cli.js
+/绝对路径/项目/node_modules/.bin/tsx /绝对路径/项目/scripts/benchmark.ts npm exec --offline --yes --package=/绝对路径/包.tgz -- ssh-mcp
 ```
 
-第二项先预热 npm exec 缓存，并在仓库外运行，脚本与包路径使用绝对路径，避免解析到当前项目。脚本只初始化 MCP，不连接示例地址对应的 SSH 服务器。
+第二项先预热 npm exec 缓存，并在仓库外运行，tsx、脚本与包路径使用绝对路径，避免解析到当前项目。脚本只初始化 MCP，不连接示例地址对应的 SSH 服务器。
 
 直接入口、缓存启动与首次安装分开记录，说明样本数、运行环境和缓存条件。`--version` 耗时不能替代初始化耗时。本地 tarball 不等于公开 registry 首次 npx 安装，不以不稳定公网耗时作为 CI 门槛。历史测量见对应[版本记录](releases/)。

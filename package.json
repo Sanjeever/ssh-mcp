@@ -28,11 +28,11 @@
   "packageManager": "pnpm@11.20.0",
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "node --import=tsx --test test/*.test.ts scripts/*.test.mjs",
-    "build": "node --import=tsx scripts/build.mjs",
-    "pack:check": "node --import=tsx scripts/pack-check.mjs",
-    "bump": "node --import=tsx scripts/version.mjs bump",
-    "version:check": "node --import=tsx scripts/version.mjs check"
+    "test": "node --import=tsx --test test/*.test.ts scripts/*.test.ts",
+    "build": "node --import=tsx scripts/build.ts",
+    "pack:check": "node --import=tsx scripts/pack-check.ts",
+    "bump": "node --import=tsx scripts/version.ts bump",
+    "version:check": "node --import=tsx scripts/version.ts check"
   },
   "devDependencies": {
     "@modelcontextprotocol/sdk": "1.32.1",
