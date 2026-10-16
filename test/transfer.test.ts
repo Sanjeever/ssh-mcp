@@ -126,7 +126,7 @@ test('大小预检及实际读取上限覆盖源增长', { timeout: 60000 }, asy
   await assert.rejects(upload.run('upload', join(upload.root, 'source'), '/payload', false, new AbortController().signal, uploaded), { code: 'ssh_transfer_limit' });
   assert.equal(uploaded.bytes_transferred, MAX_TRANSFER_BYTES);
 });
-test('真实 stdio 四工具发现与 SFTP 调用', async t => {
+test('真实 stdio 工具发现与 SFTP 调用', async t => {
   const s = await fixture(t), source = join(s.root, 'source'), target = join(s.root, 'target'); writeFileSync(source, 'MCP 文件');
   const p = startCLI(t, { SSH_MCP_SERVER_TEST_HOST: s.config.host, SSH_MCP_SERVER_TEST_PORT: String(s.config.port), SSH_MCP_KNOWN_HOSTS: join(s.root, 'known_hosts') });
   await p.init(); assert((await p.request('tools/list').result).tools.some(tool => tool.name === 'ssh_upload'));

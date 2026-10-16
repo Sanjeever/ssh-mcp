@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { root } from './process.js';
 import { npm } from './npm.js';
 import { smoke } from './smoke.js';
+import type { SmokeStep } from './smoke.js';
 import { pack } from './pack.js';
 import { startSSH } from '../test/helpers/ssh-server.js';
 import { execSession } from '../test/helpers/exec-session.js';
@@ -47,17 +48,25 @@ export async function checkPack(tarball?: string) {
       assert.equal(version.stdout.toString().trim(), pkg.version);
       const source = join(install, 'source'), target = join(install, 'target'); writeFileSync(source, '隔离安装 SFTP 往返');
       const remote = `/payload-${index}`;
-      const calls = [
-        { name: 'ssh_exec', arguments: { server_id: 'smoke', command: 'ok' } },
-        { name: 'ssh_exec', arguments: { server_id: 'smoke', command: 'stdin', stdin: '安装包标准输入\n' } },
-        { name: 'ssh_upload', arguments: { server_id: 'smoke', local_path: source, remote_path: remote } },
-        { name: 'ssh_download', arguments: { server_id: 'smoke', local_path: target, remote_path: remote } },
+      const calls: SmokeStep[] = [
+        { request: { name: 'ssh_exec', arguments: { server_id: 'smoke', command: 'ok', save_output: true } } },
+        { request: { name: 'ssh_exec', arguments: { server_id: 'smoke', command: 'stdin', stdin: '安装包标准输入\n' } } },
+        { request: { name: 'ssh_upload', arguments: { server_id: 'smoke', local_path: source, remote_path: remote } } },
+        { request: { name: 'ssh_download', arguments: { server_id: 'smoke', local_path: target, remote_path: remote } } },
+        { request: { name: 'ssh_probe', arguments: { server_id: 'smoke' } } },
+        { request: { name: 'ssh_read_file', arguments: { server_id: 'smoke', remote_path: remote } } },
+        { request: results => ({ name: 'ssh_edit_file', arguments: { server_id: 'smoke', remote_path: remote, old_text: '往返', new_text: '修改', expected_revision: results[5]?.structuredContent?.revision } }), error_code: 'ssh_transfer_failed' },
+        { request: results => ({ name: 'ssh_output', arguments: { output_id: results[0]?.structuredContent?.output_id } }) },
+        { request: { name: 'ssh_exec_start', arguments: { server_id: 'smoke', command: 'hang' } } },
+        { request: results => ({ name: 'ssh_task_status', arguments: { task_id: results[8]?.structuredContent?.task_id } }) },
+        { request: results => ({ name: 'ssh_task_cancel', arguments: { task_id: results[8]?.structuredContent?.task_id } }) },
+        { request: results => ({ name: 'ssh_output_forget', arguments: { output_id: results[0]?.structuredContent?.output_id } }) },
       ];
       assert.equal(await smoke(process.execPath, [join(installed, 'dist/cli.js')], env, install, calls), pkg.version);
       assert.equal(readFileSync(target, 'utf8'), readFileSync(source, 'utf8'));
       const agentEnv = { ...env, SSH_MCP_SERVER_SMOKE_PASSWORD: undefined, SSH_MCP_SERVER_SMOKE_AGENT_SOCKET: agent.endpoint, SSH_MCP_SERVER_SMOKE_JUMP_SERVER_ID: 'gateway', SSH_MCP_SERVER_GATEWAY_HOST: gateway.config.host, SSH_MCP_SERVER_GATEWAY_PORT: String(gateway.config.port), SSH_MCP_SERVER_GATEWAY_USERNAME: gateway.config.username, SSH_MCP_SERVER_GATEWAY_PASSWORD: gateway.config.password };
       assert.equal(await smoke(process.execPath, [join(installed, 'dist/cli.js')], agentEnv, install, [calls[0]!, calls[1]!]), pkg.version);
-      console.log(`已验证 ${process.platform}-${process.arch} 隔离安装 ${index === 0 ? '正常安装' : flags.join(' ')}、CLI、四工具、标准输入、Agent 与跳板机`);
+      console.log(`已验证 ${process.platform}-${process.arch} 隔离安装 ${index === 0 ? '正常安装' : flags.join(' ')}、CLI、全部工具、标准输入、Agent 与跳板机`);
     }
     return entry.info;
   } finally { for (const close of cleanup) await close(); rmSync(temp, { recursive: true, force: true }); }

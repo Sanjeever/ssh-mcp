@@ -11,7 +11,7 @@ import { execSession } from './helpers/exec-session.js';
 import { sftpSession } from './helpers/sftp-session.js';
 import { executionOutput, failureOutput, toolNames } from './helpers/stdio.js';
 
-test('官方 SDK 客户端校验四工具的成功与失败输出 Schema', async t => {
+test('官方 SDK 客户端校验工具成功与失败输出 Schema', async t => {
   const s = await startSSH(t, { session: session => { execSession(session); sftpSession(s.root)(session); } });
   const env = Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => !entry[0].startsWith('SSH_MCP_') && entry[1] !== undefined));
   Object.assign(env, { SSH_MCP_SERVER_TEST_HOST: s.config.host, SSH_MCP_SERVER_TEST_PORT: String(s.config.port), SSH_MCP_SERVER_TEST_USERNAME: s.config.username, SSH_MCP_SERVER_TEST_PASSWORD: s.config.password, SSH_MCP_KNOWN_HOSTS: join(s.root, 'known_hosts') });
@@ -47,6 +47,10 @@ test('官方 SDK 客户端校验四工具的成功与失败输出 Schema', async
   assert.equal(z.object({ text: z.string() }).parse(saved.structuredContent).text, 'remote ok\n');
   const canceled = await client.callTool({ name: 'ssh_task_cancel', arguments: { task_id: task.task_id } });
   assert.equal(taskSchema.parse(canceled.structuredContent).status, 'completed');
+  const probe = await client.callTool({ name: 'ssh_probe', arguments: { server_id: 'test' } });
+  assert.equal(z.object({ ssh: z.boolean() }).parse(probe.structuredContent).ssh, true);
+  const forgotten = await client.callTool({ name: 'ssh_output_forget', arguments: { output_id: task.output_id } });
+  assert.equal(z.object({ forgotten: z.boolean() }).parse(forgotten.structuredContent).forgotten, true);
   await client.close();
 });
 test('单文件入口支持普通及加密私钥与 ChaCha20 内嵌 WASM', async t => {
