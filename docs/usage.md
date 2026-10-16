@@ -55,7 +55,7 @@
 | 工具 | 输入 | 返回 |
 | --- | --- | --- |
 | `ssh_list` | 无参数 | `servers` 数组，按 `server_id` 排序；含 `server_id`、`description`、`host`、`port`、`username`、`auth_type` |
-| `ssh_exec` | `server_id`、`command`，可选 `timeout_seconds` | `server_id`、`stdout`、`stderr`、`exit_code`、`duration_ms`、`output_truncated` |
+| `ssh_exec` | `server_id`、`command`，可选 `stdin`、`output_mode`、`timeout_seconds` | `server_id`、`stdout`、`stderr`、退出状态、时长与输出统计 |
 | `ssh_upload` | `server_id`、`local_path`、`remote_path`，可选 `overwrite`、`timeout_seconds` | `server_id`、`local_path`、`remote_path`、`bytes_transferred`、`duration_ms` |
 | `ssh_download` | 同上传 | 同上传 |
 
@@ -65,9 +65,11 @@
 
 `ssh_exec` 由远端默认 Shell 解释命令，不经过本机 Shell。无 PTY、无持续 Shell；一次调用中的 `cd` 和 `export` 不会延续。不会自动输入 sudo 密码，不承诺 MFA、OTP 或任意 keyboard-interactive 登录。
 
-stdout/stderr 合计保留最多 128 KiB，超出后继续排空并设置 `output_truncated`。截断边界处不完整的 UTF-8 序列丢弃，内部连续非法字节以 `?` 替换。
+`stdin` 是最多 1 MiB 的 UTF-8 文本，按编码后的字节数检查。发送服从背压，完成后发送 EOF；省略或空字符串也发送 EOF。例如 `command="bash -s"`，脚本内容放在 `stdin`。输入不会延续到其他调用，也不写入日志。
 
-非零退出码标记 MCP 工具错误并保留输出。信号结束或未收到数值退出状态时，`exit_code` 为 `null` 并返回错误，不由信号推导数值。
+stdout 最多保存 96 KiB，stderr 最多保存 32 KiB，分别排空和统计。`output_mode` 为 `head`、`tail` 或默认的 `head_tail`；后者各保留一半头尾，中间显示省略标记，标记也计入保存配额。短输出保持原样。`stdout_bytes`、`stderr_bytes` 是实际接收字节数，`stdout_omitted_bytes`、`stderr_omitted_bytes` 表示截断省略的原始字节，边界不完整的 UTF-8 序列丢弃，内部连续非法字节以 `?` 替换。各流的 `*_truncated` 和汇总 `output_truncated` 表达是否截断。
+
+非零退出码标记 MCP 工具错误并保留输出。信号结束或未收到数值退出状态时，`exit_code` 为 `null` 并返回错误，不由信号推导数值；收到具体信号时通过 `exit_signal` 返回，否则为 `null`。
 
 ### 文件传输
 
