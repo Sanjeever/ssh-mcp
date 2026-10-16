@@ -21,7 +21,7 @@ export async function checkPack(tarball) {
     const cache = join(temp, 'cache');
     const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('SSH_MCP_') && !key.toLowerCase().startsWith('npm_config_')));
     Object.assign(env, { SSH_MCP_SERVER_SMOKE_HOST: ssh.config.host, SSH_MCP_SERVER_SMOKE_PORT: String(ssh.config.port), SSH_MCP_SERVER_SMOKE_USERNAME: ssh.config.username, SSH_MCP_SERVER_SMOKE_PASSWORD: ssh.config.password, SSH_MCP_KNOWN_HOSTS: join(temp, 'known_hosts') });
-    // 首次正常安装准备独立 registry 缓存；Unix 限制 PATH，验证没有编译器也能安装。
+    // 隔离用户 npm 缓存；Unix 限制 PATH，验证没有编译器也能安装。
     const installEnv = { ...env };
     if (process.platform !== 'win32') {
       const tools = join(temp, 'tools'); mkdirSync(tools);

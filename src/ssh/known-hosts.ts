@@ -71,7 +71,7 @@ export function checkTrust(content: string, host: string, port: number, key: Buf
     const parsed = utils.parseKey(`${type} ${encoded}`);
     if (parsed instanceof Error || parsed.type !== type || !parsed.getPublicSSH().equals(data)) throw invalid();
     if (marker === '@revoked') {
-      // 与旧实现一致，撤销密钥在整个文件内生效。
+      // 撤销按密钥在全文件生效，不能先按当前主机过滤；设计约束见 docs/architecture.md。
       if (data.equals(key)) throw rejected();
       continue;
     }
