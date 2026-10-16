@@ -33,6 +33,14 @@ export class OutputStore {
     const entry = this.entries.get(id);
     if (entry && entry.expires === undefined) entry.expires = this.now() + OUTPUT_TTL_MS;
   }
+  forget(id: string) {
+    this.prune();
+    const entry = this.entries.get(id);
+    if (!entry) throw new SSHError('ssh_output_unknown', '输出 ID 不存在、已过期或属于其他 MCP 会话', { operation_state: 'not_started' });
+    if (entry.expires === undefined) throw new SSHError('ssh_output_active', '输出仍属于活动操作，请先取消或等待完成', { operation_state: 'not_started' });
+    this.entries.delete(id);
+    return { output_id: id, forgotten: true };
+  }
   read(id: string, stream: OutputStream, offset: number, maxBytes: number) {
     this.prune();
     const entry = this.entries.get(id);

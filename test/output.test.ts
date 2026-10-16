@@ -43,6 +43,15 @@ test('增量页等待尚未到齐的 UTF-8 字符，最终非法尾部可以消�
   assert.equal(store.read(id, 'stdout', 3, 256).next_offset, 5);
 });
 
+test('显式释放完成输出归还容量，活动输出不能释放', () => {
+  const store = new OutputStore(), id = store.create();
+  assert.throws(() => store.forget(id), { code: 'ssh_output_active' });
+  for (let index = 1; index < MAX_SAVED_OUTPUTS; index++) store.create();
+  store.finish(id); assert.equal(store.forget(id).forgotten, true);
+  assert.throws(() => store.read(id, 'stdout', 0, 256), { code: 'ssh_output_unknown' });
+  store.create(); assert.throws(() => store.create(), { code: 'ssh_output_limit' });
+});
+
 test('真实 MCP 降低返回预算并分页取得被省略的输出，失败仍可读取', async t => {
   const s = await startSSH(t, { session: execSession });
   const p = startCLI(t, { SSH_MCP_SERVER_TEST_HOST: s.config.host, SSH_MCP_SERVER_TEST_PORT: String(s.config.port), SSH_MCP_KNOWN_HOSTS: join(s.root, 'known_hosts') });

@@ -41,6 +41,9 @@ export class TaskStore {
     return this.snapshot(task);
   }
   get(id: string) { return this.snapshot(this.find(id)); }
+  forgetOutput(id: string) {
+    for (const [taskId, task] of this.entries) if (task.outputId === id) this.entries.delete(taskId);
+  }
   cancel(id: string) {
     const task = this.find(id);
     if (!task.result) { task.cancelRequested = true; task.controller.abort(); }

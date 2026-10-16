@@ -33,11 +33,16 @@ test('异步命令及时返回，运行中读取输出，结果保留退出失�
     assert.equal(page.finished, false); text = String(page.text); if (!text) await delay(20);
   }
   assert.equal(text, 'partial');
+  const activeForget = await p.request('tools/call', { name: 'ssh_output_forget', arguments: { output_id: task.output_id } }).result;
+  assert.equal((activeForget.structuredContent?.error as { code: string }).code, 'ssh_output_active');
   const canceled = await call('ssh_task_cancel', { task_id: task.task_id }); assert.equal(canceled.cancel_requested, true);
   const final = await finish(task.task_id);
   assert.equal(final.status, 'canceled'); assert.equal((final.result as { error: { code: string } }).error.code, 'ssh_canceled');
   assert.equal((final.result as { stdout: string }).stdout, 'partial');
   assert.equal((await call('ssh_task_cancel', { task_id: task.task_id })).status, 'canceled');
+  assert.equal((await call('ssh_output_forget', { output_id: task.output_id })).forgotten, true);
+  const forgotten = await p.request('tools/call', { name: 'ssh_task_status', arguments: { task_id: task.task_id } }).result;
+  assert.equal((forgotten.structuredContent?.error as { code: string }).code, 'ssh_task_unknown');
   for (const command of ['ok', 'fail', 'missing']) {
     const started = await call('ssh_exec_start', { server_id: 'test', command, stdout_max_bytes: 256 });
     const completed = await finish(started.task_id);

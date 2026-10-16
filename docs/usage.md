@@ -77,6 +77,7 @@ Agent 认证设置 `SSH_MCP_SERVER_<ID>_AGENT_SOCKET`，并省略密码、私钥
 | `ssh_task_status` | `task_id` | 当前状态，结束后包含 `result` 命令结果 |
 | `ssh_task_cancel` | `task_id` | 取消请求状态与当前任务快照 |
 | `ssh_output` | `output_id`，可选 `stream`、`offset`、`max_bytes` | 输出页、`next_offset`、可读取量与实际接收量、保存截断和完成状态 |
+| `ssh_output_forget` | `output_id` | 释放已结束操作的保存输出和关联任务记录，归还容量 |
 | `ssh_upload` | `server_id`、`local_path`、`remote_path`，可选 `overwrite`、`atomic`、`timeout_seconds` | 路径、字节数、时长；原子模式增加发布与清理状态 |
 | `ssh_download` | `server_id`、`local_path`、`remote_path`，可选 `overwrite`、`timeout_seconds` | 路径、字节数、时长 |
 | `ssh_read_file` | `server_id`、`remote_path`，可选 `start_line`、`line_count`、`timeout_seconds` | 文本页、行范围、`next_line`、文件大小与 `revision` |
@@ -103,6 +104,8 @@ stdout 最多保存 96 KiB，stderr 最多保存 32 KiB，分别排空和统计�
 用 `ssh_output` 指定 `output_id`、`stream=stdout|stderr`，从默认 `offset=0` 开始读取，后续沿返回的 `next_offset` 继续。`max_bytes` 默认 16 KiB，范围 256 字节至 96 KiB。偏移按原始字节计算，合法 UTF-8 字符不会在页边界拆开；任意偏移落入续字节时跳到下一个字符。`available_bytes` 为已保存量，`total_bytes` 为实际接收量，`storage_truncated` 表示保存上限导致丢弃。`finished` 表示操作已结束，`eof` 表示保存内容已读完；保存截断时 EOF 不代表完整远端输出。失败调用也可读取已有输出。未知、过期或其他会话的 ID 返回 `ssh_output_unknown`。
 
 非零退出码标记 MCP 工具错误并保留输出。信号结束或未收到数值退出状态时，`exit_code` 为 `null` 并返回错误，不由信号推导数值；收到具体信号时通过 `exit_signal` 返回，否则为 `null`。
+
+无需继续保留时，可调用 `ssh_output_forget` 立即释放输出和关联任务结果，归还保存容量；后续读取或查询返回未知 ID。活动操作返回 `ssh_output_active`，须先取消或等待完成。此操作不连接远端、不删除远端文件。
 
 ### 异步命令
 
