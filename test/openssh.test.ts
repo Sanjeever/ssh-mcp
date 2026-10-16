@@ -7,6 +7,7 @@ import { dial } from '../src/ssh/client.js';
 import { transfer } from '../src/ssh/transfer.js';
 import type { TransferResult } from '../src/ssh/transfer.js';
 import { exec, createExecResult } from '../src/ssh/exec.js';
+import { startCLI } from './helpers/stdio.js';
 
 test('独立 OpenSSH：主机信任、stdin、退出状态和原子上传', { skip: process.env.SSH_MCP_TEST_OPENSSH !== '1' }, async t => {
   const s = await startOpenSSH(t);
@@ -28,6 +29,12 @@ test('独立 OpenSSH：主机信任、stdin、退出状态和原子上传', { sk
     assert.equal(command === 'exit 7' ? result.exit_code : result.exit_signal, command === 'exit 7' ? 7 : 'SIGTERM');
   }
   const source = join(s.root, 'source'), target = join(s.root, 'target'); writeFileSync(source, '新配置'); writeFileSync(target, '旧配置'); chmodSync(target, 0o640);
+  const p = startCLI(t, { SSH_MCP_SERVER_TEST_HOST: s.config.host, SSH_MCP_SERVER_TEST_PORT: String(s.config.port), SSH_MCP_SERVER_TEST_USERNAME: s.config.username, SSH_MCP_SERVER_TEST_PASSWORD: undefined, SSH_MCP_SERVER_TEST_PRIVATE_KEY_PATH: s.config.privateKeyPath, SSH_MCP_KNOWN_HOSTS: config.knownHosts });
+  await p.init();
+  const mcpUpload = await p.request('tools/call', { name: 'ssh_upload', arguments: { server_id: 'test', local_path: source, remote_path: join(s.root, 'mcp-atomic'), atomic: true } }).result;
+  assert.equal(mcpUpload.isError, false); assert.equal(mcpUpload.structuredContent?.publication_state, 'published'); assert.equal(mcpUpload.structuredContent?.cleanup_pending, false);
+  assert.equal(readFileSync(join(s.root, 'mcp-atomic'), 'utf8'), '新配置');
+  p.child.stdin.end(); await p.closed;
   const upload = async (overwrite: boolean) => {
     const connection = await connect(), result: TransferResult = { bytes_transferred: 0 };
     try { await transfer(connection, 'upload', source, target, overwrite, result, undefined, { atomic: true }); return result; }
