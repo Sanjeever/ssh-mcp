@@ -4,7 +4,8 @@ import { dirname, isAbsolute, join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type { SFTPWrapper, Stats } from 'ssh2';
 import type { Connection } from './client.js';
-import { SSHError, interrupted } from '../errors.js';
+import { SSHError, interrupted, failureReason } from '../errors.js';
+import type { OperationContext } from '../errors.js';
 
 export const MAX_TRANSFER_BYTES = 128 * 1024 * 1024;
 export interface TransferResult { bytes_transferred: number }
@@ -37,11 +38,12 @@ export async function copyLimited(read: (buffer: Buffer, position: number) => Pr
   }
 }
 
-export async function transfer(connection: Connection, direction: 'upload' | 'download', local: string, remote: string, overwrite: boolean, result: TransferResult) {
+export async function transfer(connection: Connection, direction: 'upload' | 'download', local: string, remote: string, overwrite: boolean, result: TransferResult, context: OperationContext = { phase: 'open', operation_state: 'not_started' }) {
   validatePaths(local, remote);
   let file: FileHandle | undefined, sftp: SFTPWrapper | undefined, handle: Buffer | undefined, temp: string | undefined;
   let failure: unknown;
   try {
+    context.phase = 'open';
     if (connection.signal.aborted) throw interrupted(connection.signal);
     if (direction === 'upload') {
       const info = await lstat(local).catch(() => { throw invalid(); });
@@ -63,7 +65,9 @@ export async function transfer(connection: Connection, direction: 'upload' | 'do
         if (!existing.isFile()) throw invalid();
         if (!overwrite) throw new SSHError('ssh_target_exists', '远端目标已存在，覆盖需要 overwrite=true');
       }
+      context.operation_state = 'may_have_started';
       handle = await wait<Buffer>(done => files.open(remote, overwrite ? 'w' : 'wx', done));
+      context.phase = 'write';
       const target = handle, source = file!;
       await copyLimited(async (buffer, position) => (await source.read(buffer, 0, buffer.length, position)).bytesRead,
         (buffer, position) => wait<void>(done => files.write(target, buffer, 0, buffer.length, position, done)), result, connection.signal);
@@ -72,6 +76,7 @@ export async function transfer(connection: Connection, direction: 'upload' | 'do
       if (!info.isFile() || info.size > MAX_TRANSFER_BYTES) throw invalid();
       handle = await wait<Buffer>(done => files.open(remote, 'r', done));
       const source = handle;
+      context.phase = 'read';
       const actual = await wait<Stats>(done => files.fstat(source, done));
       if (!actual.isFile() || actual.size > MAX_TRANSFER_BYTES) throw invalid();
       const candidate = join(dirname(local), `.ssh-download-${randomUUID()}`);
@@ -89,18 +94,22 @@ export async function transfer(connection: Connection, direction: 'upload' | 'do
       await target.sync();
     }
     const remoteHandle = handle;
+    context.phase = 'close';
     handle = undefined;
     await wait<void>(done => files.close(remoteHandle, done));
     await file!.close(); file = undefined;
     if (connection.signal.aborted) throw interrupted(connection.signal);
     if (direction === 'download') {
+      context.phase = 'publish';
       await localTarget(local, overwrite);
       if (connection.signal.aborted) throw interrupted(connection.signal);
       if (overwrite) { await rename(temp!, local); temp = undefined; }
       else await link(temp!, local);
     }
+    context.operation_state = 'completed';
   } catch (error) {
     failure = connection.signal.aborted ? interrupted(connection.signal) : error instanceof SSHError ? error : failed(direction === 'upload' ? 'SFTP 上传未完成；无法读取源或创建、写入及关闭目标，远端可能遗留部分文件，请检查后再操作' : 'SFTP 下载未完成或无法发布目标文件，原目标未替换；请检查权限、目标冲突及硬链接支持');
+    if (failure instanceof SSHError) failure = new SSHError(failure.code, failure.message, { reason: failureReason(error), ...failure.details });
     connection.close();
   } finally {
     if (file) { try { await file.close(); } catch { if (!failure) failure = failed('本地文件关闭失败'); } }

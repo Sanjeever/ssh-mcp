@@ -54,7 +54,7 @@ export async function dial(server: Readonly<ServerConfig>, config: Config, signa
   return new Promise((resolve, reject) => {
     const client = new SSHClient(), socket = new Socket();
     socket.setNoDelay(true);
-    let ready = false, tcp = false, trustError: Error | undefined;
+    let ready = false, tcp = false, trustError: Error | undefined, phase = 'connect';
     const abort = () => {
       client.destroy(); socket.destroy();
       if (!ready) finish(interrupted(signal));
@@ -64,7 +64,9 @@ export async function dial(server: Readonly<ServerConfig>, config: Config, signa
       clearTimeout(timer);
       if (error) {
         signal.removeEventListener('abort', abort);
-        client.destroy(); socket.destroy(); reject(signal.aborted ? interrupted(signal) : error);
+        client.destroy(); socket.destroy();
+        const failure = signal.aborted ? interrupted(signal) : error;
+        reject(failure instanceof SSHError ? new SSHError(failure.code, failure.message, { phase, operation_state: 'not_started', ...failure.details }) : failure);
       } else {
         ready = true;
         resolve(new Connection(client, signal));
@@ -80,10 +82,13 @@ export async function dial(server: Readonly<ServerConfig>, config: Config, signa
     });
     socket.on('error', () => { if (!ready) finish(new SSHError(tcp ? 'ssh_handshake_failed' : 'ssh_connect_failed', tcp ? 'SSH 握手连接中断' : 'SSH TCP 连接失败，请检查网络、地址和端口')); });
     client.once('ready', () => finish());
+    client.on('handshake', () => { phase = 'authentication'; });
     socket.once('connect', () => {
       tcp = true;
+      phase = 'handshake';
       try {
         client.connect({ ...credentials, sock: socket, readyTimeout: 0, hostVerifier: (key: Buffer) => {
+          phase = 'host_verification';
           if (signal.aborted) { trustError = interrupted(signal); return false; }
           try { verifyHost(config.knownHosts, config.hostKeyPolicy, server.host, server.port, key); return true; }
           catch (error) { trustError = error as Error; return false; }

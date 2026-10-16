@@ -1,5 +1,6 @@
 import { isUtf8 } from 'node:buffer';
 import { SSHError, interrupted } from '../errors.js';
+import type { OperationContext } from '../errors.js';
 import type { Connection } from './client.js';
 import type { ClientChannel } from 'ssh2';
 
@@ -30,7 +31,7 @@ export function cleanOutput(data: Buffer): string {
   return result;
 }
 
-export async function exec(connection: Connection, command: string, result: ExecResult) {
+export async function exec(connection: Connection, command: string, result: ExecResult, context: OperationContext = { phase: 'exec', operation_state: 'not_started' }) {
   let channel: ClientChannel | undefined;
   const stdout: Buffer[] = [], stderr: Buffer[] = [];
   let remaining = MAX_OUTPUT_BYTES, signaled = false;
@@ -42,8 +43,9 @@ export async function exec(connection: Connection, command: string, result: Exec
   };
   try {
     await connection.wait<void>(done => {
+      context.phase = 'exec'; context.operation_state = 'may_have_started';
       connection.client.exec(command, (error, stream) => {
-        if (error) { done(new SSHError('ssh_exec_failed', 'SSH 会话创建失败')); return; }
+        if (error) { context.operation_state = 'not_started'; done(new SSHError('ssh_exec_failed', 'SSH 会话创建失败')); return; }
         channel = stream;
         // 同一个网络包可能包含请求确认、输出及退出状态，必须在回调内同步监听。
         stream.on('data', (data: Buffer) => capture(stdout, data));
@@ -57,6 +59,7 @@ export async function exec(connection: Connection, command: string, result: Exec
       });
     });
     if (connection.signal.aborted) throw interrupted(connection.signal);
+    if (result.exit_code !== null || signaled) context.operation_state = 'completed';
     if (signaled) throw new SSHError('ssh_exit_signal', '远端命令因信号结束，无法确认数值退出码，请检查远端状态');
     if (result.exit_code === null) throw new SSHError('ssh_exec_unknown', 'SSH 执行中断或未返回退出码，远端状态可能不确定，请检查后再操作');
     if (result.exit_code !== 0) throw new SSHError('ssh_exit_nonzero', `远端命令退出码为 ${result.exit_code}`);

@@ -1,5 +1,19 @@
+export interface OperationContext {
+  phase: string;
+  operation_state: 'not_started' | 'may_have_started' | 'completed';
+}
+export interface ErrorDetails extends Partial<OperationContext> { reason?: string; hop_server_id?: string }
 export class SSHError extends Error {
-  constructor(public readonly code: string, message: string) { super(message); }
+  constructor(public readonly code: string, message: string, public readonly details: ErrorDetails = {}) { super(message); }
+}
+export function failureReason(error: unknown): string | undefined {
+  const code = (error as { code?: unknown })?.code;
+  if (code === 'EACCES' || code === 'EPERM' || code === 3) return 'permission_denied';
+  if (code === 'ENOENT' || code === 2) return 'not_found';
+  if (code === 'EEXIST') return 'target_exists';
+  if (code === 'ENOSPC') return 'no_space';
+  if (code === 'ENOTSUP' || code === 8) return 'unsupported';
+  return undefined;
 }
 export function interrupted(signal: AbortSignal): SSHError {
   return signal.reason instanceof SSHError ? signal.reason : new SSHError('ssh_canceled', 'SSH 操作已取消；远端进程或文件状态可能不确定，上传可能遗留部分文件，请检查后再操作');

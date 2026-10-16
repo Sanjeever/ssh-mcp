@@ -81,7 +81,9 @@ stdout/stderr 合计保留最多 128 KiB，超出后继续排空并设置 `outpu
 
 ### 结果、错误与取消
 
-参数通过 Schema 校验后，调用成功和操作失败均提供 `structuredContent` 与内容相同的 JSON 文本。操作失败通过 `isError` 及 `error.code`、中文 `error.message` 表达，并保留已有输出或传输进度。参数校验失败返回 `isError` 与中文文本，不提供上述结构化结果，也不回显参数值。MCP 取消或会话关闭后，客户端不一定能收到最终工具结果。
+调用成功、操作失败与参数校验失败均提供 `structuredContent` 与内容相同的 JSON 文本。操作失败通过 `isError` 及 `error.code`、中文 `error.message` 表达，并保留已有输出或传输进度。错误包含 `phase` 和 `operation_state`，可识别的底层原因通过 `reason` 表达，例如 `permission_denied`、`not_found`、`target_exists`、`no_space` 和 `unsupported`。状态为 `not_started`、`may_have_started` 或 `completed`，不表示失败后可以自动重试。
+
+参数校验失败返回 `ssh_input_invalid`，`issues` 指出字段路径、问题类型以及适用的类型或上下限，不回显参数值；此时不包含操作结果字段。未知工具返回协议错误。工具 annotations 描述只读性和副作用，下载会写本地文件。MCP 取消或会话关闭后，客户端不一定能收到最终工具结果。
 
 超时、取消或连接中断会关闭本次连接。远端进程与文件状态可能不确定，关闭连接不保证远端进程已停止，程序不自动重试命令。
 
