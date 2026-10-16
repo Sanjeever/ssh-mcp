@@ -2,16 +2,43 @@ import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import type { Config } from './config.js';
+import { SSHError, operationSignal } from './errors.js';
+import { dial } from './ssh/client.js';
+import { exec } from './ssh/exec.js';
+
+const selection = {
+  server_id: z.string().regex(/^[a-z][a-z0-9_]*$/).describe('ssh_list 返回的精确 server_id，不自动选择目标'),
+  timeout_seconds: z.number().int().min(1).max(3600).default(180).describe('调用总超时秒数，连接与认证另设 15 秒上限'),
+};
+const execInput = z.strictObject({ ...selection, command: z.string().min(1).describe('交给远端默认 Shell 解释，不经过本机 Shell') });
+const errorSchema = z.object({ code: z.string(), message: z.string() }).optional();
+const definitions = [
+  { name: 'ssh_list', description: '列出配置中的 SSH 服务器与认证类型，按 server_id 排序，不联网探测，不返回凭据。远端操作前使用精确 server_id 选择目标。', input: z.strictObject({}), output: z.object({ servers: z.array(z.object({ server_id: z.string(), description: z.string(), host: z.string(), port: z.number().int(), username: z.string(), auth_type: z.enum(['password', 'private_key']) })) }) },
+  { name: 'ssh_exec', description: '通过独立 SSH exec 执行远端命令，无 PTY、无持续 Shell、不自动输入 sudo 密码。stdout/stderr 合计保留 128 KiB，超出后排空。超时或取消后远端状态可能不确定，不自动重试。', input: execInput, output: z.object({ server_id: z.string(), stdout: z.string(), stderr: z.string(), exit_code: z.number().int().nullable(), duration_ms: z.number().int(), output_truncated: z.boolean(), error: errorSchema }) },
+];
+const respond = (data: Record<string, unknown>, isError = false) => ({ isError, structuredContent: data, content: [{ type: 'text' as const, text: JSON.stringify(data) }] });
 
 export function createServer(config: Config, version: string, root: AbortSignal) {
   const server = new Server({ name: 'ssh-mcp', version }, { capabilities: { tools: {} } });
-  const schema = z.strictObject({});
-  const output = z.object({ servers: z.array(z.object({ server_id: z.string(), description: z.string(), host: z.string(), port: z.number().int(), username: z.string(), auth_type: z.enum(['password', 'private_key']) })) });
-  server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: [{ name: 'ssh_list', description: '列出配置中的 SSH 服务器与认证类型，按 server_id 排序，不联网探测，不返回凭据。远端操作前使用精确 server_id 选择目标。', inputSchema: z.toJSONSchema(schema), outputSchema: z.toJSONSchema(output) }] }));
-  server.setRequestHandler(CallToolRequestSchema, async request => {
-    if (root.aborted || request.params.name !== 'ssh_list' || !schema.safeParse(request.params.arguments ?? {}).success) return { isError: true, content: [{ type: 'text', text: '工具参数无效，请按输入 Schema 检查必填字段、类型、取值范围和未知参数' }] };
-    const structuredContent = { servers: [...config.servers.values()].map(s => ({ server_id: s.id, description: s.description, host: s.host, port: s.port, username: s.username, auth_type: s.privateKeyPath ? 'private_key' : 'password' })) };
-    return { structuredContent, content: [{ type: 'text', text: JSON.stringify(structuredContent) }] };
+  server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: definitions.map(d => ({ name: d.name, description: d.description, inputSchema: z.toJSONSchema(d.input, { io: 'input' }), outputSchema: z.toJSONSchema(d.output) })) }));
+  server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
+    const definition = definitions.find(d => d.name === request.params.name);
+    if (!definition?.input.safeParse(request.params.arguments ?? {}).success) return { isError: true, content: [{ type: 'text', text: '工具参数无效，请按输入 Schema 检查必填字段、类型、取值范围和未知参数' }] };
+    if (request.params.name === 'ssh_list') return respond({ servers: [...config.servers.values()].map(s => ({ server_id: s.id, description: s.description, host: s.host, port: s.port, username: s.username, auth_type: s.privateKeyPath ? 'private_key' : 'password' })) });
+    const input = execInput.parse(request.params.arguments);
+    const start = Date.now(), op = operationSignal(AbortSignal.any([root, extra.signal]), input.timeout_seconds);
+    const result = { server_id: input.server_id, stdout: '', stderr: '', exit_code: null as number | null, output_truncated: false, duration_ms: 0 };
+    let error: { code: string; message: string } | undefined;
+    try {
+      const target = config.servers.get(input.server_id);
+      if (!target) throw new SSHError('ssh_server_unknown', '未知 server_id，请使用 ssh_list 返回的精确 ID');
+      const connection = await dial(target, config, op.signal, op.deadline);
+      try { await exec(connection, input.command, result); } finally { connection.close(); }
+    } catch (failure) {
+      error = failure instanceof SSHError ? { code: failure.code, message: failure.message } : { code: 'ssh_error', message: 'SSH 操作失败，远端状态可能不确定，请检查后再操作' };
+    } finally { op.dispose(); }
+    result.duration_ms = Date.now() - start;
+    return respond({ ...result, ...(error ? { error } : {}) }, !!error);
   });
   return server;
 }

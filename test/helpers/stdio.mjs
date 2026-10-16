@@ -9,6 +9,7 @@ export function startCLI(t, extraEnv = {}) {
   let buffer = '', stderr = '', nextID = 0;
   const pending = new Map();
   const closed = once(child, 'close');
+  child.once('close', () => { for (const entry of pending.values()) { clearTimeout(entry.timer); entry.reject(new Error('MCP 会话关闭')); } pending.clear(); });
   child.stderr.on('data', chunk => { stderr += chunk; });
   child.stdout.on('data', chunk => {
     buffer += chunk;
