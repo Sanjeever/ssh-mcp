@@ -11,9 +11,10 @@
 | `HOST` | 必填，主机名或 IP；IPv6 不加方括号，端口单独填写 |
 | `PORT` | 默认 22，范围 1–65535 |
 | `USERNAME` | 必填 |
-| `PASSWORD` | 与 `PRIVATE_KEY_PATH` 二选一，不能为空，保留原始空白 |
+| `PASSWORD` | 与 `PRIVATE_KEY_PATH`、`AGENT_SOCKET` 三选一，不能为空，保留原始空白 |
 | `PRIVATE_KEY_PATH` | MCP 机器上的普通私钥文件路径，不能为空，支持 `~/`；Windows 支持 `~\` |
 | `PASSPHRASE` | 私钥口令，可选，仅适用于私钥认证，保留原始空白 |
+| `AGENT_SOCKET` | 显式 SSH Agent 端点；macOS/Linux 为 Unix socket 绝对路径或 `~/` 路径，Windows 为 `\\.\pipe\...` |
 | `DESCRIPTION` | 可选，用于识别服务器用途 |
 
 在 README 示例的 `env` 中继续添加其他 ID 即可配置多台服务器。例如使用已有加密私钥的服务器：
@@ -30,6 +31,8 @@
 ```
 
 未加密私钥省略 `PASSPHRASE`。程序不修改远端 `authorized_keys`。非法 ID、未知服务器字段、缺少必填项、认证冲突、非法端口及必要路径错误会阻止启动；私钥内容与口令在连接时校验。
+
+Agent 认证设置 `SSH_MCP_SERVER_<ID>_AGENT_SOCKET`，并省略密码、私钥及口令字段。Unix 填写实际 `SSH_AUTH_SOCK` 值，程序不展开环境变量或自动选择 Agent；Windows 可使用 `\\.\pipe\openssh-ssh-agent`。不支持依赖外部辅助程序的 Pageant/Cygwin 入口。认证使用本机 Agent 签名，不开启 Agent forwarding；Agent socket 受本次调用取消、握手上限和总超时约束。
 
 配置路径支持主目录展开，相对路径基于进程工作目录解析，不展开 `$VAR` 或命名用户主目录。工具传输路径规则见[文件传输](#文件传输)，与配置路径不同。
 

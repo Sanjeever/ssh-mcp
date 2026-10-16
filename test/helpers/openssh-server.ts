@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync, readFileSync, rmSync, chmodSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, readFileSync, rmSync, chmodSync, existsSync } from 'node:fs';
 import { tmpdir, userInfo } from 'node:os';
 import { join } from 'node:path';
 import { createServer } from 'node:net';
@@ -51,4 +51,19 @@ export async function startOpenSSH(t: { after: (fn: () => void | Promise<void>) 
     await delay(20);
   }
   throw new Error(`临时 sshd 未就绪：${diagnostics}`);
+}
+
+export async function startOpenSSHAgent(t: { after: (fn: () => void | Promise<void>) => void }, root: string, keyPath: string) {
+  const endpoint = join(root, 'system-agent.sock');
+  const child = spawn('ssh-agent', ['-D', '-a', endpoint], { stdio: 'ignore' });
+  const closed = once(child, 'close');
+  t.after(async () => { if (child.exitCode === null && child.signalCode === null) child.kill('SIGTERM'); await closed; });
+  for (let attempt = 0; !existsSync(endpoint) && attempt < 100; attempt++) {
+    if (child.exitCode !== null) throw new Error('临时 ssh-agent 启动失败');
+    await delay(10);
+  }
+  if (!existsSync(endpoint)) throw new Error('临时 ssh-agent 未就绪');
+  const added = spawnSync('ssh-add', [keyPath], { env: { ...process.env, SSH_AUTH_SOCK: endpoint }, encoding: 'utf8' });
+  if (added.status !== 0) throw new Error(`临时 Agent 加载密钥失败：${added.stderr}`);
+  return endpoint;
 }

@@ -23,6 +23,12 @@ test('分组、默认值、主目录和凭据空白', t => {
   if (process.platform === 'win32') assert.equal(resolvePath('~\\file'), join(homedir(), 'file'));
   assert.match(resolvePath('$LITERAL/file'), /\$LITERAL/);
 });
+test('Agent 端点显式选择且与密码和私钥互斥', () => {
+  const endpoint = process.platform === 'win32' ? '\\\\.\\pipe\\openssh-ssh-agent' : '/tmp/ssh-agent.sock';
+  const env = { ...base, SSH_MCP_SERVER_PROD_DB_PASSWORD: undefined, SSH_MCP_SERVER_PROD_DB_AGENT_SOCKET: endpoint };
+  assert.equal(loadConfig(env).servers.get('prod_db')?.agentSocket, endpoint);
+  for (const extra of [{ SSH_MCP_SERVER_PROD_DB_PASSWORD: ' secret ' }, { SSH_MCP_SERVER_PROD_DB_PASSPHRASE: 'secret' }, { SSH_MCP_SERVER_PROD_DB_AGENT_SOCKET: 'pageant' }, { SSH_MCP_SERVER_PROD_DB_AGENT_SOCKET: '' }]) assert.throws(() => loadConfig({ ...env, ...extra }));
+});
 test('非法配置拒绝启动且不泄露凭据', () => {
   for (const [name, value] of Object.entries({ SSH_MCP_SERVER_bad_HOST: 'secret', SSH_MCP_SERVER_DEV_TOKEN: 'secret', SSH_MCP_SERVER_PROD_DB_PORT: 'secret', SSH_MCP_SERVER_PROD_DB_PRIVATE_KEY_PATH: 'secret', SSH_MCP_SERVER_PROD_DB_PASSPHRASE: 'secret', SSH_MCP_SERVER_PROD_DB_USERNAME: '', SSH_MCP_SERVER_PROD_DB_HOST: 'localhost:22', SSH_MCP_HOST_KEY_POLICY: 'secret', SSH_MCP_KNOWN_HOSTS: '~secret', SSH_MCP_SERVER_PROD_DB_PASSWORD: '' })) {
     assert.throws(() => loadConfig({ ...base, [name]: value }), error => error instanceof Error && !error.message.includes('secret'));

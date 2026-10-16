@@ -14,7 +14,7 @@
 
 stdout 是 MCP 协议通道，诊断写 stderr，不能混入启动 banner。工具字段采用 snake_case，Schema 拒绝未知参数，避免拼写错误被静默接受。默认日志不记录凭据、完整命令、输出或整份参数，工具列表不暴露凭据和私钥路径。
 
-使用密码或已有私钥认证，不修改远端 `authorized_keys`。本机文件访问继承 MCP 进程账号权限，不提供额外工作区沙箱或同账号进程间的凭据隔离。
+使用密码、已有私钥或显式本机 Agent 端点认证，不修改远端 `authorized_keys`。Agent 协议复用 SSH 库，socket 归本次调用管理，不开启 Agent forwarding。支持 Unix socket 与 Windows OpenSSH named pipe，不引入 Pageant/Cygwin 外部辅助程序。本机文件访问继承 MCP 进程账号权限，不提供额外工作区沙箱或同账号进程间的凭据隔离。
 
 每次远端调用使用独立连接，完成后关闭；不使用连接池、持续 Shell 或 PTY，使会话状态和资源归属限定在一次调用内。命令交给远端默认 Shell，不经本机 Shell，不自动输入 sudo 密码，不承诺交互式多因素认证。
 

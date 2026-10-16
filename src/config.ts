@@ -12,6 +12,7 @@ export interface ServerConfig {
   password?: string;
   privateKeyPath?: string;
   passphrase?: string;
+  agentSocket?: string;
 }
 export interface Config {
   servers: ReadonlyMap<string, Readonly<ServerConfig>>;
@@ -28,7 +29,7 @@ export function resolvePath(value: string): string {
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
-  const fields = ['PRIVATE_KEY_PATH', 'DESCRIPTION', 'PASSPHRASE', 'USERNAME', 'PASSWORD', 'HOST', 'PORT'];
+  const fields = ['PRIVATE_KEY_PATH', 'AGENT_SOCKET', 'DESCRIPTION', 'PASSPHRASE', 'USERNAME', 'PASSWORD', 'HOST', 'PORT'];
   const groups = new Map<string, Record<string, string>>();
   for (const [name, value] of Object.entries(env)) {
     if (!name.startsWith('SSH_MCP_SERVER_') || value === undefined) continue;
@@ -54,11 +55,16 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       server.port = Number(g.PORT);
       if (!/^[+-]?\d+$/.test(g.PORT) || !Number.isInteger(server.port) || server.port < 1 || server.port > 65535) throw new Error(`服务器 ${server.id} 的 PORT 必须为 1–65535 的整数`);
     }
-    const password = g.PASSWORD !== undefined, key = g.PRIVATE_KEY_PATH !== undefined;
-    if (password === key || (password && !g.PASSWORD) || (key && !g.PRIVATE_KEY_PATH?.trim())) throw new Error(`服务器 ${server.id} 必须配置 PASSWORD 或 PRIVATE_KEY_PATH，且两者互斥、不能为空`);
+    const password = g.PASSWORD !== undefined, key = g.PRIVATE_KEY_PATH !== undefined, agent = g.AGENT_SOCKET !== undefined;
+    if (Number(password) + Number(key) + Number(agent) !== 1 || (password && !g.PASSWORD) || (key && !g.PRIVATE_KEY_PATH?.trim()) || (agent && !g.AGENT_SOCKET)) throw new Error(`服务器 ${server.id} 必须配置 PASSWORD、PRIVATE_KEY_PATH 或 AGENT_SOCKET，三者互斥且不能为空`);
     if (g.PASSPHRASE !== undefined && !key) throw new Error(`服务器 ${server.id} 的 PASSPHRASE 仅适用于私钥认证`);
     server.password = g.PASSWORD;
     server.passphrase = g.PASSPHRASE;
+    if (agent) {
+      const endpoint = g.AGENT_SOCKET!;
+      if (endpoint.includes('\0') || (process.platform === 'win32' ? !endpoint.startsWith('\\\\.\\pipe\\') : !endpoint.startsWith('/') && !endpoint.startsWith('~/'))) throw new Error(`服务器 ${server.id} 的 AGENT_SOCKET 须为 Unix socket 路径或 Windows OpenSSH named pipe，不支持 Pageant/Cygwin`);
+      server.agentSocket = process.platform === 'win32' ? endpoint : resolvePath(endpoint);
+    }
     if (key) {
       server.privateKeyPath = resolvePath(g.PRIVATE_KEY_PATH!);
       try { if (!statSync(server.privateKeyPath).isFile()) throw new Error(); }

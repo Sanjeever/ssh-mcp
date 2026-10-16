@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { writeFileSync, readFileSync, statSync, readdirSync, chmodSync } from 'node:fs';
 import { join } from 'node:path';
-import { startOpenSSH } from './helpers/openssh-server.js';
+import { startOpenSSH, startOpenSSHAgent } from './helpers/openssh-server.js';
 import { dial } from '../src/ssh/client.js';
 import { transfer } from '../src/ssh/transfer.js';
 import type { TransferResult } from '../src/ssh/transfer.js';
@@ -12,6 +12,9 @@ test('独立 OpenSSH：主机信任、stdin、退出状态和原子上传', { sk
   const s = await startOpenSSH(t);
   const config = { servers: new Map([[s.config.id, s.config]]), knownHosts: join(s.root, 'known_hosts'), hostKeyPolicy: 'accept_new' as const };
   const connect = () => dial(s.config, config, new AbortController().signal);
+  const endpoint = await startOpenSSHAgent(t, s.root, s.config.privateKeyPath!);
+  const agentConnection = await dial({ ...s.config, privateKeyPath: undefined, agentSocket: endpoint }, config, new AbortController().signal);
+  agentConnection.close();
   const c = await connect(), output = createExecResult();
   try { await exec(c, 'cat', output, undefined, { stdin: '独立服务端\n' }); } finally { c.close(); }
   assert.equal(output.stdout, '独立服务端\n'); assert.equal(output.exit_code, 0);
