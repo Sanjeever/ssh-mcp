@@ -24,6 +24,8 @@ pnpm install --frozen-lockfile --ignore-scripts
 
 独立 OpenSSH 测试采用临时 `sshd`、密钥及信任文件，验证认证、退出状态、标准输入与原子 SFTP 发布。Unix 已安装 OpenSSH 时可执行 `SSH_MCP_TEST_OPENSSH=1 node --import=tsx --test test/openssh.test.ts`。普通 `pnpm test` 显式跳过此环境测试；CI 独立 job 必须执行。Linux 若需以 root 启动测试 daemon，配置 `SSH_MCP_TEST_SSHD_SUDO=1`，需要无交互 sudo；不修改系统 sshd 配置或服务。
 
+独立 Dropbear 测试需要可用 Docker，执行 `SSH_MCP_TEST_DROPBEAR=1 node --import=tsx --test test/dropbear.test.ts`。测试在固定摘要的 Alpine 容器内安装 Dropbear 与 BusyBox，分别验证有、无 OpenSSH SFTP 子系统的情况，覆盖认证、stdin、退出状态、能力探测、传输和文本原子编辑。端口绑定环回地址，账户、服务端密钥与 authorized_keys 位于临时容器，客户端密钥和 known_hosts 位于临时目录，结束后清理。普通测试跳过此环境测试；CI 独立 job 必须执行。首次运行需要下载镜像和容器内软件包，验证对象不包含真实路由器固件。
+
 包内文件白名单由 `package.json` 定义，并由 [pack.ts](../scripts/pack.ts) 检查。构建生成 `dist/THIRD_PARTY_NOTICES.txt`，保留内嵌依赖许可；不要手工维护生成文件或在文档重复完整包文件清单。
 
 ### CI 产物

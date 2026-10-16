@@ -66,6 +66,29 @@ jobs:
           SSH_MCP_TEST_SSHD_SUDO: '1'
         run: node --import=tsx --test test/openssh.test.ts
 
+  dropbear:
+    name: 独立 Dropbear 与 BusyBox 兼容性
+    needs: build
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '26'
+          package-manager-cache: false
+      - uses: pnpm/action-setup@v6
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+      - uses: actions/download-artifact@v8
+        with:
+          name: release-assets
+          path: dist
+      - name: 隔离容器的认证、Shell、SFTP 缺失与原子发布
+        env:
+          SSH_MCP_TEST_DROPBEAR: '1'
+        run: node --import=tsx --test test/dropbear.test.ts
+
   native:
     name: 原生验证 ${{ matrix.target }} Node ${{ matrix.node }}
     needs: build
