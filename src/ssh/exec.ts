@@ -31,12 +31,7 @@ export function cleanOutput(data: Buffer): string {
 }
 
 export async function exec(connection: Connection, command: string, result: ExecResult) {
-  let channel: ClientChannel;
-  try { channel = await connection.wait<ClientChannel>(done => connection.client.exec(command, done)); }
-  catch {
-    if (connection.signal.aborted) throw interrupted(connection.signal);
-    throw new SSHError('ssh_exec_failed', 'SSH 会话创建失败');
-  }
+  let channel: ClientChannel | undefined;
   const stdout: Buffer[] = [], stderr: Buffer[] = [];
   let remaining = MAX_OUTPUT_BYTES, signaled = false;
   const capture = (chunks: Buffer[], data: Buffer) => {
@@ -45,16 +40,21 @@ export async function exec(connection: Connection, command: string, result: Exec
     if (n) chunks.push(Buffer.from(data.subarray(0, n)));
     remaining -= n;
   };
-  channel.on('data', (data: Buffer) => capture(stdout, data));
-  channel.stderr.on('data', (data: Buffer) => capture(stderr, data));
-  channel.on('exit', (code: number | null, signal?: string) => {
-    if (typeof code === 'number') result.exit_code = code;
-    if (signal) { signaled = true; result.exit_code = null; }
-  });
   try {
     await connection.wait<void>(done => {
-      channel.once('close', () => done(null));
-      channel.once('error', () => done(new SSHError('ssh_exec_unknown', 'SSH 执行中断或未返回退出码，远端状态可能不确定，请检查后再操作')));
+      connection.client.exec(command, (error, stream) => {
+        if (error) { done(new SSHError('ssh_exec_failed', 'SSH 会话创建失败')); return; }
+        channel = stream;
+        // 同一个网络包可能包含请求确认、输出及退出状态，必须在回调内同步监听。
+        stream.on('data', (data: Buffer) => capture(stdout, data));
+        stream.stderr.on('data', (data: Buffer) => capture(stderr, data));
+        stream.on('exit', (code: number | null, signal?: string) => {
+          if (typeof code === 'number') result.exit_code = code;
+          if (signal) { signaled = true; result.exit_code = null; }
+        });
+        stream.once('close', () => done(null));
+        stream.once('error', () => done(new SSHError('ssh_exec_unknown', 'SSH 执行中断或未返回退出码，远端状态可能不确定，请检查后再操作')));
+      });
     });
     if (connection.signal.aborted) throw interrupted(connection.signal);
     if (signaled) throw new SSHError('ssh_exit_signal', '远端命令因信号结束，无法确认数值退出码，请检查远端状态');
@@ -67,6 +67,6 @@ export async function exec(connection: Connection, command: string, result: Exec
   } finally {
     result.stdout = cleanOutput(Buffer.concat(stdout));
     result.stderr = cleanOutput(Buffer.concat(stderr));
-    channel.destroy();
+    channel?.destroy();
   }
 }
