@@ -1,6 +1,6 @@
 # 使用指南
 
-本文说明客户端配置、主机信任和四个工具的操作方式。快速启动示例见 [README](../README.md)。配置定义以 [src/config.ts](../src/config.ts) 为准，精确工具字段以 MCP `tools/list` 返回的 Schema 为准，其定义位于 [src/server.ts](../src/server.ts)；本文解释使用方式与限制。
+本文说明客户端配置、主机信任和工具操作方式。快速启动示例见 [README](../README.md)。配置定义以 [src/config.ts](../src/config.ts) 为准，精确工具字段以 MCP `tools/list` 返回的 Schema 为准，其定义位于 [src/server.ts](../src/server.ts)；本文解释使用方式与限制。
 
 ## 服务器配置
 
@@ -61,7 +61,8 @@ Agent 认证设置 `SSH_MCP_SERVER_<ID>_AGENT_SOCKET`，并省略密码、私钥
 | 工具 | 输入 | 返回 |
 | --- | --- | --- |
 | `ssh_list` | 无参数 | `servers` 数组，按 `server_id` 排序；含 `server_id`、`description`、`host`、`port`、`username`、`auth_type` |
-| `ssh_exec` | `server_id`、`command`，可选 `stdin`、`output_mode`、`timeout_seconds` | `server_id`、`stdout`、`stderr`、退出状态、时长与输出统计 |
+| `ssh_exec` | `server_id`、`command`，可选 `stdin`、`output_mode`、`stdout_max_bytes`、`stderr_max_bytes`、`save_output`、`timeout_seconds` | `server_id`、`stdout`、`stderr`、退出状态、时长与输出统计；保存时含 `output_id` |
+| `ssh_output` | `output_id`，可选 `stream`、`offset`、`max_bytes` | 输出页、`next_offset`、可读取量与实际接收量、保存截断和完成状态 |
 | `ssh_upload` | `server_id`、`local_path`、`remote_path`，可选 `overwrite`、`atomic`、`timeout_seconds` | 路径、字节数、时长；原子模式增加发布与清理状态 |
 | `ssh_download` | `server_id`、`local_path`、`remote_path`，可选 `overwrite`、`timeout_seconds` | 路径、字节数、时长 |
 
@@ -74,6 +75,12 @@ Agent 认证设置 `SSH_MCP_SERVER_<ID>_AGENT_SOCKET`，并省略密码、私钥
 `stdin` 是最多 1 MiB 的 UTF-8 文本，按编码后的字节数检查。发送服从背压，完成后发送 EOF；省略或空字符串也发送 EOF。例如 `command="bash -s"`，脚本内容放在 `stdin`。输入不会延续到其他调用，也不写入日志。
 
 stdout 最多保存 96 KiB，stderr 最多保存 32 KiB，分别排空和统计。`output_mode` 为 `head`、`tail` 或默认的 `head_tail`；后者各保留一半头尾，中间显示省略标记，标记也计入保存配额。短输出保持原样。`stdout_bytes`、`stderr_bytes` 是实际接收字节数，`stdout_omitted_bytes`、`stderr_omitted_bytes` 表示截断省略的原始字节，边界不完整的 UTF-8 序列丢弃，内部连续非法字节以 `?` 替换。各流的 `*_truncated` 和汇总 `output_truncated` 表达是否截断。
+
+`stdout_max_bytes` 和 `stderr_max_bytes` 可以降低本次结果预算，最小均为 256 字节，默认值分别为上述上限。无论预算大小，输出持续排空。
+
+`save_output=true` 显式在当前 MCP 会话内存中保存输出，并返回 `output_id`。每流保留前 4 MiB，会话最多 8 份，总缓冲区上限 64 MiB。容量耗尽时在执行前返回 `ssh_output_limit`，不自动淘汰已有输出。保存内容在操作完成后 10 分钟过期，读取不会续期；会话关闭时释放。不写本地日志文件，不跨进程恢复。
+
+用 `ssh_output` 指定 `output_id`、`stream=stdout|stderr`，从默认 `offset=0` 开始读取，后续沿返回的 `next_offset` 继续。`max_bytes` 默认 16 KiB，范围 256 字节至 96 KiB。偏移按原始字节计算，合法 UTF-8 字符不会在页边界拆开；任意偏移落入续字节时跳到下一个字符。`available_bytes` 为已保存量，`total_bytes` 为实际接收量，`storage_truncated` 表示保存上限导致丢弃。`finished` 表示操作已结束，`eof` 表示保存内容已读完；保存截断时 EOF 不代表完整远端输出。失败调用也可读取已有输出。未知、过期或其他会话的 ID 返回 `ssh_output_unknown`。
 
 非零退出码标记 MCP 工具错误并保留输出。信号结束或未收到数值退出状态时，`exit_code` 为 `null` 并返回错误，不由信号推导数值；收到具体信号时通过 `exit_signal` 返回，否则为 `null`。
 

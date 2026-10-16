@@ -2,7 +2,7 @@
 
 通过 stdio MCP 连接配置中的多台 SSH 服务器，执行命令、上传和下载文件。以单个 `@sanjeever/ssh-mcp` npm 包分发，运行要求 Node.js 22+，无需本机 ssh/scp 或编译工具，安装不下载 registry 运行依赖。
 
-支持 macOS、Linux、Windows 的 x64 与 arm64。四个工具为 `ssh_list`、`ssh_exec`、`ssh_upload`、`ssh_download`。
+支持 macOS、Linux、Windows 的 x64 与 arm64。提供服务器列表、命令执行、输出分页读取与文件传输工具，完整入口见[工具说明](https://github.com/Sanjeever/ssh-mcp/blob/main/docs/usage.md#工具调用)。
 
 ## 快速开始
 

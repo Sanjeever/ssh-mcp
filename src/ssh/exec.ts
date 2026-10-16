@@ -11,12 +11,18 @@ export function createExecResult() {
   return { stdout: '', stderr: '', exit_code: null as number | null, exit_signal: null as string | null, output_truncated: false, stdout_truncated: false, stderr_truncated: false, stdout_bytes: 0, stderr_bytes: 0, stdout_omitted_bytes: 0, stderr_omitted_bytes: 0 };
 }
 export type ExecResult = ReturnType<typeof createExecResult>;
-export interface ExecOptions { stdin?: string; output_mode?: OutputMode }
+export interface ExecOptions {
+  stdin?: string;
+  output_mode?: OutputMode;
+  stdout_max_bytes?: number;
+  stderr_max_bytes?: number;
+  onOutput?: (stream: 'stdout' | 'stderr', data: Buffer) => void;
+}
 
 export async function exec(connection: Connection, command: string, result: ExecResult, context: OperationContext = { phase: 'exec', operation_state: 'not_started' }, options: ExecOptions = {}) {
   let channel: ClientChannel | undefined;
-  const stdout = new OutputCapture(96 * 1024, options.output_mode ?? 'head_tail');
-  const stderr = new OutputCapture(32 * 1024, options.output_mode ?? 'head_tail');
+  const stdout = new OutputCapture(options.stdout_max_bytes ?? 96 * 1024, options.output_mode ?? 'head_tail');
+  const stderr = new OutputCapture(options.stderr_max_bytes ?? 32 * 1024, options.output_mode ?? 'head_tail');
   const input = Buffer.from(options.stdin ?? '');
   if (input.length > MAX_STDIN_BYTES) throw new SSHError('ssh_input_invalid', 'stdin 编码后不能超过 1 MiB');
   let signaled = false;
@@ -28,8 +34,8 @@ export async function exec(connection: Connection, command: string, result: Exec
         if (error) { done(new SSHError('ssh_exec_failed', 'SSH 会话创建失败')); return; }
         channel = stream;
         // 同一个网络包可能包含请求确认、输出及退出状态，必须在回调内同步监听。
-        stream.on('data', (data: Buffer) => stdout.append(data));
-        stream.stderr.on('data', (data: Buffer) => stderr.append(data));
+        stream.on('data', (data: Buffer) => { stdout.append(data); options.onOutput?.('stdout', data); });
+        stream.stderr.on('data', (data: Buffer) => { stderr.append(data); options.onOutput?.('stderr', data); });
         stream.on('exit', (code: number | null, signal?: string) => {
           if (typeof code === 'number') result.exit_code = code;
           if (signal) { signaled = true; result.exit_code = null; result.exit_signal = signal; }

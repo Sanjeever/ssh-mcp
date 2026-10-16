@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { CallToolResultSchema, InitializeResultSchema, JSONRPCMessageSchema, ListToolsResultSchema } from '@modelcontextprotocol/sdk/types.js';
 import type { CallToolRequest } from '@modelcontextprotocol/sdk/types.js';
-import { executionOutput, serversOutput, transferOutput } from '../test/helpers/stdio.js';
+import { executionOutput, serversOutput, transferOutput, toolNames } from '../test/helpers/stdio.js';
 
 // 使用实际 stdio 消息检查安装后的可执行文件，测试数据不指向公网服务器。
 export async function smoke(command: string, args: string[], env: NodeJS.ProcessEnv, cwd: string, calls: CallToolRequest['params'][] = []) {
@@ -43,7 +43,7 @@ export async function smoke(command: string, args: string[], env: NodeJS.Process
         assert.equal(code, 0, `进程异常退出 ${signal ?? ''} ${stderr}`);
         assert.equal(buffer, '');
         assert.equal(stderr, '');
-        assert.equal(ListToolsResultSchema.parse(responses.get(2)).tools.length, 4);
+        assert.deepEqual(ListToolsResultSchema.parse(responses.get(2)).tools.map(tool => tool.name).sort(), toolNames);
         const list = CallToolResultSchema.parse(responses.get(3));
         assert.equal(list.isError ?? false, false);
         assert(serversOutput.parse(list.structuredContent).servers.some(server => server.server_id === 'smoke'));

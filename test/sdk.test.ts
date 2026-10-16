@@ -7,7 +7,7 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { startSSH } from './helpers/ssh-server.js';
 import { execSession } from './helpers/exec-session.js';
 import { sftpSession } from './helpers/sftp-session.js';
-import { executionOutput, failureOutput } from './helpers/stdio.js';
+import { executionOutput, failureOutput, toolNames } from './helpers/stdio.js';
 
 test('官方 SDK 客户端校验四工具的成功与失败输出 Schema', async t => {
   const s = await startSSH(t, { session: session => { execSession(session); sftpSession(s.root)(session); } });
@@ -16,7 +16,7 @@ test('官方 SDK 客户端校验四工具的成功与失败输出 Schema', async
   const transport = new StdioClientTransport({ command: process.execPath, args: ['dist/cli.js'], env, stderr: 'pipe' });
   const client = new Client({ name: 'sdk-contract', version: '1' }); t.after(() => client.close());
   await client.connect(transport);
-  const tools = await client.listTools(); assert.equal(tools.tools.length, 4);
+  const tools = await client.listTools(); assert.deepEqual(tools.tools.map(tool => tool.name).sort(), toolNames);
   for (const tool of tools.tools) { assert(tool.outputSchema); assert.equal(tool.inputSchema.additionalProperties, false); }
   const list = await client.callTool({ name: 'ssh_list', arguments: {} }); assert.equal(list.isError, false); assert.equal(s.authCount(), 0);
   for (const command of ['ok', 'fail', 'missing', 'signal']) {
