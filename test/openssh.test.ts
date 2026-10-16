@@ -46,6 +46,14 @@ test('独立 OpenSSH：主机信任、stdin、退出状态和原子上传', { sk
   assert.equal(outcomes.filter(outcome => outcome.status === 'fulfilled').length, 1);
   assert.equal(readFileSync(fresh, 'utf8'), '新配置'); assert.equal(statSync(fresh).mode & 0o777, 0o600);
   assert(!readdirSync(s.root).some(name => name.startsWith('.ssh-upload-')));
+  const gatewayService = await startOpenSSH(t), gateway = { ...gatewayService.config, id: 'gateway' }, hopped = { ...s.config, jumpServerId: gateway.id };
+  const hoppedConfig = { ...config, servers: new Map([[gateway.id, gateway], [hopped.id, hopped]]) };
+  const viaJump = await dial(hopped, hoppedConfig, new AbortController().signal), hoppedOutput = createExecResult();
+  try { await exec(viaJump, 'cat', hoppedOutput, undefined, { stdin: '独立 OpenSSH 跳板\n' }); } finally { viaJump.close(); }
+  assert.equal(hoppedOutput.stdout, '独立 OpenSSH 跳板\n');
+  const download = await dial(hopped, hoppedConfig, new AbortController().signal);
+  try { await transfer(download, 'download', join(s.root, 'download'), fresh, false, { bytes_transferred: 0 }); } finally { download.close(); }
+  assert.equal(readFileSync(join(s.root, 'download'), 'utf8'), '新配置');
   const cleanupConnection = await connect(), cleanup: TransferResult = { bytes_transferred: 0 };
   const cleanupSftp = cleanupConnection.client.sftp.bind(cleanupConnection.client);
   cleanupConnection.client.sftp = callback => cleanupSftp((error, files) => {

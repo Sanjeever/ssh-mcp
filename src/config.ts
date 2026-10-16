@@ -13,6 +13,7 @@ export interface ServerConfig {
   privateKeyPath?: string;
   passphrase?: string;
   agentSocket?: string;
+  jumpServerId?: string;
 }
 export interface Config {
   servers: ReadonlyMap<string, Readonly<ServerConfig>>;
@@ -29,7 +30,7 @@ export function resolvePath(value: string): string {
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
-  const fields = ['PRIVATE_KEY_PATH', 'AGENT_SOCKET', 'DESCRIPTION', 'PASSPHRASE', 'USERNAME', 'PASSWORD', 'HOST', 'PORT'];
+  const fields = ['PRIVATE_KEY_PATH', 'AGENT_SOCKET', 'JUMP_SERVER_ID', 'DESCRIPTION', 'PASSPHRASE', 'USERNAME', 'PASSWORD', 'HOST', 'PORT'];
   const groups = new Map<string, Record<string, string>>();
   for (const [name, value] of Object.entries(env)) {
     if (!name.startsWith('SSH_MCP_SERVER_') || value === undefined) continue;
@@ -60,6 +61,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     if (g.PASSPHRASE !== undefined && !key) throw new Error(`服务器 ${server.id} 的 PASSPHRASE 仅适用于私钥认证`);
     server.password = g.PASSWORD;
     server.passphrase = g.PASSPHRASE;
+    if (g.JUMP_SERVER_ID !== undefined) {
+      if (!/^[a-z][a-z0-9_]*$/.test(g.JUMP_SERVER_ID)) throw new Error(`服务器 ${server.id} 的 JUMP_SERVER_ID 须为精确的小写 server_id`);
+      server.jumpServerId = g.JUMP_SERVER_ID;
+    }
     if (agent) {
       const endpoint = g.AGENT_SOCKET!;
       if (endpoint.includes('\0') || (process.platform === 'win32' ? !endpoint.startsWith('\\\\.\\pipe\\') : !endpoint.startsWith('/') && !endpoint.startsWith('~/'))) throw new Error(`服务器 ${server.id} 的 AGENT_SOCKET 须为 Unix socket 路径或 Windows OpenSSH named pipe，不支持 Pageant/Cygwin`);
@@ -71,6 +76,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       catch { throw new Error(`服务器 ${server.id} 的私钥文件不存在、不可访问或不是普通文件`); }
     }
     servers.set(server.id, Object.freeze(server));
+  }
+  for (const server of servers.values()) {
+    if (!server.jumpServerId) continue;
+    const jump = servers.get(server.jumpServerId);
+    if (!jump || jump.id === server.id || jump.jumpServerId) throw new Error(`服务器 ${server.id} 的跳板引用不存在、自引用或包含嵌套跳转，仅支持单跳`);
   }
   return Object.freeze({ servers, hostKeyPolicy: policy, knownHosts });
 }

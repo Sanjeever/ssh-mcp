@@ -15,6 +15,7 @@
 | `PRIVATE_KEY_PATH` | MCP 机器上的普通私钥文件路径，不能为空，支持 `~/`；Windows 支持 `~\` |
 | `PASSPHRASE` | 私钥口令，可选，仅适用于私钥认证，保留原始空白 |
 | `AGENT_SOCKET` | 显式 SSH Agent 端点；macOS/Linux 为 Unix socket 绝对路径或 `~/` 路径，Windows 为 `\\.\pipe\...` |
+| `JUMP_SERVER_ID` | 可选，已配置跳板服务器的精确小写 ID，仅支持单跳 |
 | `DESCRIPTION` | 可选，用于识别服务器用途 |
 
 在 README 示例的 `env` 中继续添加其他 ID 即可配置多台服务器。例如使用已有加密私钥的服务器：
@@ -33,6 +34,8 @@
 未加密私钥省略 `PASSPHRASE`。程序不修改远端 `authorized_keys`。非法 ID、未知服务器字段、缺少必填项、认证冲突、非法端口及必要路径错误会阻止启动；私钥内容与口令在连接时校验。
 
 Agent 认证设置 `SSH_MCP_SERVER_<ID>_AGENT_SOCKET`，并省略密码、私钥及口令字段。Unix 填写实际 `SSH_AUTH_SOCK` 值，程序不展开环境变量或自动选择 Agent；Windows 可使用 `\\.\pipe\openssh-ssh-agent`。不支持依赖外部辅助程序的 Pageant/Cygwin 入口。认证使用本机 Agent 签名，不开启 Agent forwarding；Agent socket 受本次调用取消、握手上限和总超时约束。
+
+目标设置 `SSH_MCP_SERVER_<ID>_JUMP_SERVER_ID` 引用另一台已配置服务器，例如值 `bastion` 引用 `SSH_MCP_SERVER_BASTION_*`。目标地址由跳板机连接并解析。未知引用、自引用、循环和嵌套跳转阻止启动。跳板与目标分别验证主机密钥并使用各自凭据，本机 Agent 也可用于目标认证。列表返回可选 `jump_server_id`，失败的连接步骤通过 `error.hop_server_id` 标明所在服务器。
 
 配置路径支持主目录展开，相对路径基于进程工作目录解析，不展开 `$VAR` 或命名用户主目录。工具传输路径规则见[文件传输](#文件传输)，与配置路径不同。
 
@@ -62,7 +65,7 @@ Agent 认证设置 `SSH_MCP_SERVER_<ID>_AGENT_SOCKET`，并省略密码、私钥
 | `ssh_upload` | `server_id`、`local_path`、`remote_path`，可选 `overwrite`、`atomic`、`timeout_seconds` | 路径、字节数、时长；原子模式增加发布与清理状态 |
 | `ssh_download` | `server_id`、`local_path`、`remote_path`，可选 `overwrite`、`timeout_seconds` | 路径、字节数、时长 |
 
-参数使用 snake_case，拒绝未知字段。`ssh_list` 不联网探测，不表示在线状态。远端调用总超时默认 180 秒，范围 1–3600 秒；TCP 连接与认证握手另有 15 秒上限，并受总超时约束。每次远端调用使用独立连接，结束后关闭。
+参数使用 snake_case，拒绝未知字段。`ssh_list` 不联网探测，不表示在线状态。远端调用总超时默认 180 秒，范围 1–3600 秒；每跳连接与认证握手另有 15 秒上限，并受总超时约束。目标跳的 15 秒包含转发通道建立与目标认证。每次远端调用使用独立连接或单跳连接链，结束、取消或会话关闭时释放整条链。
 
 ### 命令执行
 

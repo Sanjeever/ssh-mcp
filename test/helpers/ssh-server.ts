@@ -4,6 +4,7 @@ import { once } from 'node:events';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { createConnection } from 'node:net';
 import assert from 'node:assert/strict';
 import type { Connection, ServerConfig as SSHServerConfig, Session } from 'ssh2';
 import type { ServerConfig } from '../../src/config.js';
@@ -18,6 +19,8 @@ interface SSHOptions {
   algorithms?: SSHServerConfig['algorithms'];
   hangAuth?: boolean;
   hangSession?: boolean;
+  forward?: boolean | 'hang';
+  onForward?: () => void;
   session?: (session: Session, client: Connection) => void;
 }
 
@@ -42,11 +45,27 @@ export async function startSSH(t: { after: (fn: () => void | Promise<void>) => v
       if (ctx.method === 'publickey' && ctx.key.data.equals(publicKey) && (!ctx.signature || (ctx.blob && key.verify(ctx.blob, ctx.signature, ctx.hashAlgo)))) return ctx.accept();
       ctx.reject();
     });
-    client.on('ready', () => client.on('session', (accept) => {
-      if (options.hangSession) return;
-      const session = accept();
-      options.session?.(session, client);
-    }));
+    client.on('ready', () => {
+      client.on('session', accept => {
+        if (options.hangSession) return;
+        const session = accept(); options.session?.(session, client);
+      });
+      client.on('tcpip', (accept, reject, info) => {
+        options.onForward?.();
+        if (options.forward === 'hang') return;
+        if (!options.forward || info.destIP !== '127.0.0.1') { reject(); return; }
+        const socket = createConnection({ host: info.destIP, port: info.destPort });
+        let accepted = false;
+        const close = () => socket.destroy(); client.once('close', close);
+        socket.once('close', () => client.off('close', close));
+        socket.on('error', () => { if (!accepted) reject(); });
+        socket.once('connect', () => {
+          accepted = true;
+          const channel = accept(); channel.on('error', close); channel.once('close', close);
+          socket.pipe(channel).pipe(socket);
+        });
+      });
+    });
   });
   server.listen(0, '127.0.0.1'); await once(server, 'listening');
   t.after(async () => { for (const c of clients) c.end(); server.close(); await once(server, 'close'); rmSync(root, { recursive: true, force: true }); });

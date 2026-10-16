@@ -23,6 +23,11 @@ test('分组、默认值、主目录和凭据空白', t => {
   if (process.platform === 'win32') assert.equal(resolvePath('~\\file'), join(homedir(), 'file'));
   assert.match(resolvePath('$LITERAL/file'), /\$LITERAL/);
 });
+test('单跳引用拒绝未知、自引用、循环和嵌套', () => {
+  const env = { ...base, SSH_MCP_SERVER_JUMP_HOST: 'localhost', SSH_MCP_SERVER_JUMP_USERNAME: 'deploy', SSH_MCP_SERVER_JUMP_PASSWORD: 'secret', SSH_MCP_SERVER_PROD_DB_JUMP_SERVER_ID: 'jump' };
+  assert.equal(loadConfig(env).servers.get('prod_db')?.jumpServerId, 'jump');
+  for (const extra of [{ SSH_MCP_SERVER_PROD_DB_JUMP_SERVER_ID: 'unknown' }, { SSH_MCP_SERVER_PROD_DB_JUMP_SERVER_ID: 'prod_db' }, { SSH_MCP_SERVER_PROD_DB_JUMP_SERVER_ID: 'JUMP' }, { SSH_MCP_SERVER_JUMP_JUMP_SERVER_ID: 'prod_db' }, { SSH_MCP_SERVER_JUMP_JUMP_SERVER_ID: 'jump' }]) assert.throws(() => loadConfig({ ...env, ...extra }));
+});
 test('Agent 端点显式选择且与密码和私钥互斥', () => {
   const endpoint = process.platform === 'win32' ? '\\\\.\\pipe\\openssh-ssh-agent' : '/tmp/ssh-agent.sock';
   const env = { ...base, SSH_MCP_SERVER_PROD_DB_PASSWORD: undefined, SSH_MCP_SERVER_PROD_DB_AGENT_SOCKET: endpoint };
