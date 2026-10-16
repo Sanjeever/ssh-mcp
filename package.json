@@ -28,11 +28,11 @@
   "packageManager": "pnpm@11.20.0",
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "tsc && node --test test/*.test.mjs scripts/*.test.mjs",
-    "build": "node scripts/build.mjs",
-    "pack:check": "node scripts/pack-check.mjs",
-    "bump": "node scripts/version.mjs bump",
-    "version:check": "node scripts/version.mjs check"
+    "test": "tsc && node --import=tsx --test test/*.test.mjs scripts/*.test.mjs",
+    "build": "node --import=tsx scripts/build.mjs",
+    "pack:check": "node --import=tsx scripts/pack-check.mjs",
+    "bump": "node --import=tsx scripts/version.mjs bump",
+    "version:check": "node --import=tsx scripts/version.mjs check"
   },
   "devDependencies": {
     "@modelcontextprotocol/sdk": "1.32.1",
@@ -40,6 +40,7 @@
     "@types/ssh2": "1.15.6",
     "esbuild": "0.28.2",
     "ssh2": "1.17.0",
+    "tsx": "4.23.15",
     "typescript": "7.0.2",
     "zod": "4.6.7"
   }
