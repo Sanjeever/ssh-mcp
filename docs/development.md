@@ -10,14 +10,14 @@
 pnpm install --frozen-lockfile --ignore-scripts
 ```
 
-常规本地检查命令见 [README](../README.md#开发)，各项验证边界见下文，日常修改选择直接相关检查。`pnpm test` 编译模块测试所需代码，但不会生成单文件入口；涉及应用源码的变更须先 `pnpm build`，再验证真实 stdio 或安装包。纯文档与注释变更检查内容、链接和 diff，无需编译测试。
+常规本地检查命令见 [README](../README.md#开发)，各项验证边界见下文，日常修改选择直接相关检查。`pnpm test` 通过 tsx 运行测试，模块测试直接加载 TypeScript 源码，不会生成单文件入口；涉及应用源码的变更须先 `pnpm build`，再验证真实 stdio 或安装包。纯文档与注释变更检查内容、链接和 diff，无需编译测试。
 
 开发依赖离线安装前，先运行 `pnpm fetch --frozen-lockfile` 准备缓存，再运行 `pnpm install --frozen-lockfile --offline --ignore-scripts`。安装策略见 [pnpm-workspace.yaml](../pnpm-workspace.yaml)，依赖安装脚本禁用；开发构建使用 esbuild 的平台预编译工具。
 
 ### 验证边界
 
-- `pnpm typecheck` 检查类型；`pnpm build` 生成单文件 ESM 入口与第三方许可文本，并检查外部导入边界。
-- `pnpm test` 使用 node:test。模块测试从 `.build/test` 加载 tsc 产物，端到端与官方 SDK 客户端测试运行 `dist/cli.js`。测试覆盖配置、主机信任、执行与传输、取消与进程生命周期；具体场景以 `test/` 和 `scripts/*.test.mjs` 为准，不在文档维护用例数量。
+- `pnpm typecheck` 检查应用与测试类型；tsx 执行时不检查类型。`pnpm build` 生成单文件 ESM 入口与第三方许可文本，并检查外部导入边界。
+- `pnpm test` 使用 node:test。模块测试直接加载 `src/`，端到端与官方 SDK 客户端测试运行 `dist/cli.js`。测试覆盖配置、主机信任、执行与传输、取消与进程生命周期；具体场景以 `test/` 和 `scripts/*.test.mjs` 为准，不在文档维护用例数量。
 - `pnpm pack:check` 实际打包，并在仓库外临时目录完成正常安装、禁用脚本和省略可选依赖三条路径，核对只有应用包，再验证 CLI、MCP 初始化、四工具调用与 SFTP 往返。Unix 正常安装限制 PATH，验证无需编译器。
 
 测试使用临时目录、临时密钥、临时 known_hosts 和 Node 环回 SSH/SFTP 服务，不连接真实服务器。发布恢复单元测试隔离 npm/GitHub 外部边界，其结果不代表真实发布验证。
@@ -53,7 +53,7 @@ pnpm build
 pnpm test
 node scripts/release.mjs prepare
 node scripts/release.mjs verify
-node scripts/pack-check.mjs dist/packages/*.tgz
+node --import=tsx scripts/pack-check.mjs dist/packages/*.tgz
 ```
 
 `prepare` 默认使用根版本，也可传入与其一致的 `v<version>`。tarball 位于 `dist/packages/`，版本、文件名与完整性记录位于 `dist/release-manifest.json`。`verify` 核对版本、日志和 tarball 摘要，不执行安装测试。准备完成后不重新构建或重打包替换已验证产物；`pnpm build` 会清空 `dist/`。

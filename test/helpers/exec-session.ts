@@ -1,6 +1,7 @@
 import { once } from 'node:events';
+import type { Session } from 'ssh2';
 
-export function execSession(session) {
+export function execSession(session: Session) {
   session.on('exec', async (accept, reject, info) => {
     const stream = accept(); stream.on('error', () => {});
     if (info.command === 'hang') { stream.write('partial'); return; }

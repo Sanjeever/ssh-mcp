@@ -4,15 +4,33 @@ import { once } from 'node:events';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import assert from 'node:assert/strict';
+import type { TestContext } from 'node:test';
+import type { Connection, ServerConfig as SSHServerConfig, Session } from 'ssh2';
+import type { ServerConfig } from '../../src/config.js';
 const { Server, utils } = ssh2;
 
-export async function startSSH(t, options = {}) {
+// ssh2 服务端提供此方法，当前 @types/ssh2 只声明了客户端版本。
+declare module 'ssh2' {
+  interface Connection { setNoDelay(noDelay?: boolean): this }
+}
+
+interface SSHOptions {
+  algorithms?: SSHServerConfig['algorithms'];
+  hangAuth?: boolean;
+  hangSession?: boolean;
+  session?: (session: Session, client: Connection) => void;
+}
+
+export async function startSSH(t: Pick<TestContext, 'after'>, options: SSHOptions = {}) {
   const root = mkdtempSync(join(tmpdir(), 'ssh-server-'));
   const keys = generateKeyPairSync('rsa', { modulusLength: 2048 });
   const privateKey = keys.privateKey.export({ type: 'pkcs1', format: 'pem' });
   const encryptedKey = keys.privateKey.export({ type: 'pkcs1', format: 'pem', cipher: 'aes-256-cbc', passphrase: ' pass ' });
-  const key = utils.parseKey(privateKey), publicKey = key.getPublicSSH();
-  const clients = new Set();
+  const key = utils.parseKey(privateKey);
+  assert(!(key instanceof Error));
+  const publicKey = key.getPublicSSH();
+  const clients = new Set<Connection>();
   let authCount = 0;
   const server = new Server({ hostKeys: [privateKey], algorithms: options.algorithms }, client => {
     client.setNoDelay(true);
@@ -22,7 +40,7 @@ export async function startSSH(t, options = {}) {
       if (options.hangAuth) return;
       if (ctx.username !== 'operator') return ctx.reject();
       if (ctx.method === 'password' && ctx.password === ' secret ') return ctx.accept();
-      if (ctx.method === 'publickey' && ctx.key.data.equals(publicKey) && (!ctx.signature || key.verify(ctx.blob, ctx.signature, ctx.hashAlgo))) return ctx.accept();
+      if (ctx.method === 'publickey' && ctx.key.data.equals(publicKey) && (!ctx.signature || (ctx.blob && key.verify(ctx.blob, ctx.signature, ctx.hashAlgo)))) return ctx.accept();
       ctx.reject();
     });
     client.on('ready', () => client.on('session', (accept) => {
@@ -33,6 +51,8 @@ export async function startSSH(t, options = {}) {
   });
   server.listen(0, '127.0.0.1'); await once(server, 'listening');
   t.after(async () => { for (const c of clients) c.end(); server.close(); await once(server, 'close'); rmSync(root, { recursive: true, force: true }); });
-  const config = { id: 'test', description: '', host: '127.0.0.1', port: server.address().port, username: 'operator', password: ' secret ' };
+  const address = server.address();
+  assert(address && typeof address !== 'string');
+  const config: ServerConfig = { id: 'test', description: '', host: '127.0.0.1', port: address.port, username: 'operator', password: ' secret ' };
   return { root, config, publicKey, privateKey, encryptedKey, clients, authCount: () => authCount };
 }

@@ -95,10 +95,8 @@ jobs:
         with:
           node-version: ${{ matrix.node }}
           package-manager-cache: false
-      - name: 测试编译产物与真实 stdio
-        run: |
-          node node_modules/typescript/bin/tsc
-          node --test test/*.test.mjs scripts/*.test.mjs
+      - name: 测试 TypeScript 模块与真实 stdio
+        run: node --import=tsx --test test/*.test.ts scripts/*.test.mjs
       - name: 正常安装、禁用脚本及省略可选依赖
         shell: bash
-        run: node scripts/pack-check.mjs dist/packages/*.tgz
+        run: node --import=tsx scripts/pack-check.mjs dist/packages/*.tgz

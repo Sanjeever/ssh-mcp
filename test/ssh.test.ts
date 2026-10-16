@@ -1,18 +1,20 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createServer } from 'node:net';
+import { createServer, type Socket } from 'node:net';
 import { once } from 'node:events';
 import { writeFileSync, readFileSync, statSync, lstatSync, symlinkSync, chmodSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { createHmac } from 'node:crypto';
-import { dial } from '../.build/test/ssh/client.js';
-import { verifyHost, checkTrust, hostToken } from '../.build/test/ssh/known-hosts.js';
-import { operationSignal } from '../.build/test/errors.js';
-import { startSSH } from './helpers/ssh-server.mjs';
+import { dial } from '../src/ssh/client.js';
+import { verifyHost, checkTrust, hostToken } from '../src/ssh/known-hosts.js';
+import { operationSignal } from '../src/errors.js';
+import { startSSH } from './helpers/ssh-server.js';
+import type { Config } from '../src/config.js';
+import { SSHError } from '../src/errors.js';
 
-const cfg = (s, policy = 'accept_new') => ({ knownHosts: join(s.root, '.ssh', 'known_hosts'), hostKeyPolicy: policy });
-const line = (host, key) => `${host} ssh-rsa ${key.toString('base64')}`;
-const code = expected => error => error.code === expected;
+const cfg = (s: { root: string }, policy: Config['hostKeyPolicy'] = 'accept_new'): Config => ({ servers: new Map(), knownHosts: join(s.root, '.ssh', 'known_hosts'), hostKeyPolicy: policy });
+const line = (host: string, key: Buffer) => `${host} ssh-rsa ${key.toString('base64')}`;
+const code = (expected: string) => (error: unknown) => error instanceof SSHError && error.code === expected;
 
 test('密码、普通私钥、加密私钥与认证拒绝', async t => {
   const s = await startSSH(t);
@@ -36,7 +38,7 @@ test('密码、普通私钥、加密私钥与认证拒绝', async t => {
 test('主机规则、哈希、IPv6、端口、否定、撤销及 CA 拒绝', async t => {
   const s = await startSSH(t), other = await startSSH(t);
   const key = s.publicKey, salt = Buffer.alloc(20, 7);
-  for (const [host, port] of [['example.com', 22], ['::1', 22], ['::1', 2222], ['example.com', 2222]]) {
+  for (const [host, port] of [['example.com', 22], ['::1', 22], ['::1', 2222], ['example.com', 2222]] as const) {
     const token = hostToken(host, port);
     const hash = `|1|${salt.toString('base64')}|${createHmac('sha1', salt).update(token).digest('base64')}`;
     for (const pattern of [token, hash]) {
@@ -68,7 +70,7 @@ test('首次追加、并发冲突、换行、权限、符号链接与写入失�
   if (process.platform !== 'win32') assert.equal(statSync(path).mode & 0o777, 0o640);
   const link = join(s.root, 'link');
   try { symlinkSync(path, link); }
-  catch (error) { if (process.platform !== 'win32' || error.code !== 'EPERM') throw error; t.diagnostic('当前 Windows 账号未获符号链接权限'); return; }
+  catch (error) { if (process.platform !== 'win32' || !(error instanceof Error) || !('code' in error) || error.code !== 'EPERM') throw error; t.diagnostic('当前 Windows 账号未获符号链接权限'); return; }
   verifyHost(link, 'accept_new', 'new', 22, s.publicKey);
   assert(lstatSync(link).isSymbolicLink());
   if (process.platform !== 'win32' && process.getuid?.() !== 0) {
@@ -83,13 +85,14 @@ test('首次追加、并发冲突、换行、权限、符号链接与写入失�
 });
 
 test('握手取消、总超时与 15 秒上限分别分类且关闭 socket', { timeout: 23000 }, async t => {
-  const sockets = new Set();
+  const sockets = new Set<Socket>();
   const server = createServer(socket => { sockets.add(socket); socket.on('data', () => {}); socket.on('close', () => sockets.delete(socket)); });
   server.listen(0, '127.0.0.1'); await once(server, 'listening');
   t.after(() => { for (const socket of sockets) socket.destroy(); server.close(); });
   const s = await startSSH(t);
-  const target = { ...s.config, port: server.address().port };
-  for (const [seconds, expected] of [[.05, 'ssh_timeout'], [1, 'ssh_timeout'], [20, 'ssh_handshake_timeout']]) {
+  const address = server.address(); assert(address && typeof address !== 'string');
+  const target = { ...s.config, port: address.port };
+  for (const [seconds, expected] of [[.05, 'ssh_timeout'], [1, 'ssh_timeout'], [20, 'ssh_handshake_timeout']] as const) {
     const op = operationSignal(new AbortController().signal, seconds);
     try { await assert.rejects(dial(target, cfg(s), op.signal, op.deadline), code(expected)); } finally { op.dispose(); }
   }
@@ -103,6 +106,7 @@ test('TCP 拒绝与认证等待取消保留错误分类', async t => {
   for (let i = 0; !s.authCount() && i < 100; i++) await new Promise(resolve => setTimeout(resolve, 5));
   assert(s.authCount() > 0); controller.abort(); await assert.rejects(promise, code('ssh_canceled'));
   const server = createServer(); server.listen(0, '127.0.0.1'); await once(server, 'listening');
-  const port = server.address().port; server.close(); await once(server, 'close');
+  const address = server.address(); assert(address && typeof address !== 'string');
+  const port = address.port; server.close(); await once(server, 'close');
   await assert.rejects(dial({ ...s.config, port }, cfg(s), new AbortController().signal), code('ssh_connect_failed'));
 });

@@ -7,9 +7,9 @@ import { root } from './process.mjs';
 import { npm } from './npm.mjs';
 import { smoke } from './smoke.mjs';
 import { pack } from './pack.mjs';
-import { startSSH } from '../test/helpers/ssh-server.mjs';
-import { execSession } from '../test/helpers/exec-session.mjs';
-import { sftpSession } from '../test/helpers/sftp-session.mjs';
+import { startSSH } from '../test/helpers/ssh-server.js';
+import { execSession } from '../test/helpers/exec-session.js';
+import { sftpSession } from '../test/helpers/sftp-session.js';
 
 export async function checkPack(tarball) {
   const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));

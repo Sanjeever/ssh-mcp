@@ -3,17 +3,18 @@ import assert from 'node:assert/strict';
 import { writeFileSync, readFileSync, readdirSync, symlinkSync, openSync, closeSync, ftruncateSync } from 'node:fs';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
-import { dial } from '../.build/test/ssh/client.js';
-import { transfer, copyLimited, MAX_TRANSFER_BYTES } from '../.build/test/ssh/transfer.js';
-import { operationSignal } from '../.build/test/errors.js';
-import { startSSH } from './helpers/ssh-server.mjs';
-import { sftpSession } from './helpers/sftp-session.mjs';
-import { startCLI } from './helpers/stdio.mjs';
+import { dial } from '../src/ssh/client.js';
+import { transfer, copyLimited, MAX_TRANSFER_BYTES } from '../src/ssh/transfer.js';
+import { operationSignal } from '../src/errors.js';
+import { startSSH } from './helpers/ssh-server.js';
+import { sftpSession, type SFTPOptions } from './helpers/sftp-session.js';
+import { startCLI, transferOutput, failureOutput } from './helpers/stdio.js';
+import type { TestContext } from 'node:test';
 
-async function fixture(t, options = {}) {
+async function fixture(t: TestContext, options: SFTPOptions = {}) {
   const s = await startSSH(t, { session: session => sftpSession(s.root, options)(session) });
-  const run = async (direction, local, remote, overwrite = false, signal = new AbortController().signal, progress = { bytes_transferred: 0 }) => {
-    const c = await dial(s.config, { knownHosts: join(s.root, 'known_hosts'), hostKeyPolicy: 'accept_new' }, signal);
+  const run = async (direction: 'upload' | 'download', local: string, remote: string, overwrite = false, signal = new AbortController().signal, progress = { bytes_transferred: 0 }) => {
+    const c = await dial(s.config, { servers: new Map(), knownHosts: join(s.root, 'known_hosts'), hostKeyPolicy: 'accept_new' }, signal);
     try { await transfer(c, direction, local, remote, overwrite, progress); return progress.bytes_transferred; } finally { c.close(); }
   };
   return { ...s, run };
@@ -27,11 +28,11 @@ test('SFTP 往返、排他创建、显式覆盖和类型校验', async t => {
   assert.equal(await s.run('download', target, '/payload'), data.length); assert.deepEqual(readFileSync(target), data);
   await assert.rejects(s.run('download', target, '/payload'), { code: 'ssh_target_exists' });
   assert.equal(await s.run('download', target, '/payload', true), data.length);
-  for (const [direction, path, remote] of [['upload', s.root, '/payload'], ['upload', local, '/'], ['download', target, '/'], ['download', s.root, '/payload']]) await assert.rejects(s.run(direction, path, remote, true), { code: 'ssh_transfer_invalid' });
-  for (const [path, remote] of [['relative', '/payload'], [local, 'relative'], [local, '~/file'], [local, '/bad\0path']]) await assert.rejects(s.run('upload', path, remote), { code: 'ssh_path_invalid' });
+  for (const [direction, path, remote] of [['upload', s.root, '/payload'], ['upload', local, '/'], ['download', target, '/'], ['download', s.root, '/payload']] as const) await assert.rejects(s.run(direction, path, remote, true), { code: 'ssh_transfer_invalid' });
+  for (const [path, remote] of [['relative', '/payload'], [local, 'relative'], [local, '~/file'], [local, '/bad\0path']] as const) await assert.rejects(s.run('upload', path, remote), { code: 'ssh_path_invalid' });
   try { symlinkSync(local, join(s.root, 'symlink')); }
-  catch (error) { if (process.platform === 'win32' && error.code === 'EPERM') { t.diagnostic('当前 Windows 账号未获符号链接权限'); return; } throw error; }
-  for (const direction of ['upload', 'download']) {
+  catch (error) { if (process.platform === 'win32' && error instanceof Error && 'code' in error && error.code === 'EPERM') { t.diagnostic('当前 Windows 账号未获符号链接权限'); return; } throw error; }
+  for (const direction of ['upload', 'download'] as const) {
     await assert.rejects(s.run(direction, join(s.root, 'symlink'), '/payload', true), { code: 'ssh_transfer_invalid' });
     await assert.rejects(s.run(direction, direction === 'upload' ? local : target, '/symlink', true), { code: 'ssh_transfer_invalid' });
   }
@@ -92,9 +93,9 @@ test('真实 stdio 四工具发现与 SFTP 调用', async t => {
   for (const name of ['ssh_upload', 'ssh_download']) {
     const args = { server_id: 'test', local_path: name === 'ssh_upload' ? source : target, remote_path: '/payload' };
     const result = await p.request('tools/call', { name, arguments: args }).result;
-    assert.equal(result.isError, false); assert.equal(result.structuredContent.bytes_transferred, Buffer.byteLength('MCP 文件'));
+    assert.equal(result.isError, false); assert.equal(transferOutput.parse(result.structuredContent).bytes_transferred, Buffer.byteLength('MCP 文件'));
     const duplicate = await p.request('tools/call', { name, arguments: args }).result;
-    assert.equal(duplicate.structuredContent.error.code, 'ssh_target_exists');
+    assert.equal(failureOutput.parse(duplicate.structuredContent).error.code, 'ssh_target_exists');
   }
   assert.equal(readFileSync(target, 'utf8'), 'MCP 文件');
   p.child.stdin.end(); assert.equal((await p.closed)[0], 0); assert.equal(p.diagnostics(), '');
@@ -103,7 +104,7 @@ test('SFTP 子系统等待取消与 stdio 下载取消和 EOF 清理', async t =
   const controller = new AbortController();
   const waiting = await startSSH(t, { session: session => session.on('sftp', () => controller.abort()) });
   const op = operationSignal(controller.signal, 5);
-  const c = await dial(waiting.config, { knownHosts: join(waiting.root, 'known_hosts'), hostKeyPolicy: 'accept_new' }, op.signal);
+  const c = await dial(waiting.config, { servers: new Map(), knownHosts: join(waiting.root, 'known_hosts'), hostKeyPolicy: 'accept_new' }, op.signal);
   try { await assert.rejects(transfer(c, 'download', join(waiting.root, 'target'), '/payload', false, { bytes_transferred: 0 }), { code: 'ssh_canceled' }); } finally { c.close(); op.dispose(); }
   for (const mode of ['cancel', 'eof']) {
     const s = await fixture(t, { hangRead: true }), target = join(s.root, 'target');

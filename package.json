@@ -28,7 +28,7 @@
   "packageManager": "pnpm@11.20.0",
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "tsc && node --import=tsx --test test/*.test.mjs scripts/*.test.mjs",
+    "test": "node --import=tsx --test test/*.test.ts scripts/*.test.mjs",
     "build": "node --import=tsx scripts/build.mjs",
     "pack:check": "node --import=tsx scripts/pack-check.mjs",
     "bump": "node --import=tsx scripts/version.mjs bump",
