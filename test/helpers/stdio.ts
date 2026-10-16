@@ -9,7 +9,7 @@ export const executionOutput = z.object({ server_id: z.string(), duration_ms: z.
 export const failureOutput = z.object({ error: z.object({ code: z.string() }) });
 export const serversOutput = z.object({ servers: z.array(z.object({ server_id: z.string() })) });
 export const transferOutput = z.object({ bytes_transferred: z.number() });
-export const toolNames = ['ssh_download', 'ssh_exec', 'ssh_list', 'ssh_output', 'ssh_upload'];
+export const toolNames = ['ssh_download', 'ssh_exec', 'ssh_list', 'ssh_output', 'ssh_probe', 'ssh_upload'];
 
 interface Request<T> { id: number; result: Promise<T> }
 const responseSchemas = { initialize: InitializeResultSchema, 'tools/list': ListToolsResultSchema, 'tools/call': CallToolResultSchema };

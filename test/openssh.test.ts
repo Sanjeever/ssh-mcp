@@ -8,11 +8,15 @@ import { transfer } from '../src/ssh/transfer.js';
 import type { TransferResult } from '../src/ssh/transfer.js';
 import { exec, createExecResult } from '../src/ssh/exec.js';
 import { startCLI } from './helpers/stdio.js';
+import { probe } from '../src/ssh/probe.js';
 
 test('独立 OpenSSH：主机信任、stdin、退出状态和原子上传', { skip: process.env.SSH_MCP_TEST_OPENSSH !== '1' }, async t => {
   const s = await startOpenSSH(t);
   const config = { servers: new Map([[s.config.id, s.config]]), knownHosts: join(s.root, 'known_hosts'), hostKeyPolicy: 'accept_new' as const };
   const connect = () => dial(s.config, config, new AbortController().signal);
+  const probing = await connect();
+  try { assert.deepEqual((await probe(probing)).sftp, { available: true, atomic_overwrite: true, atomic_no_overwrite: true }); }
+  finally { probing.close(); }
   const endpoint = await startOpenSSHAgent(t, s.root, s.config.privateKeyPath!);
   const agentConnection = await dial({ ...s.config, privateKeyPath: undefined, agentSocket: endpoint }, config, new AbortController().signal).catch(error => { t.diagnostic(s.diagnostics()); throw error; });
   agentConnection.close();

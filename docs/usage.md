@@ -61,12 +61,17 @@ Agent 认证设置 `SSH_MCP_SERVER_<ID>_AGENT_SOCKET`，并省略密码、私钥
 | 工具 | 输入 | 返回 |
 | --- | --- | --- |
 | `ssh_list` | 无参数 | `servers` 数组，按 `server_id` 排序；含 `server_id`、`description`、`host`、`port`、`username`、`auth_type` |
+| `ssh_probe` | `server_id`，可选 `timeout_seconds` | SSH 认证结果、已验证主机密钥指纹、SFTP 可用性和原子发布扩展 |
 | `ssh_exec` | `server_id`、`command`，可选 `stdin`、`output_mode`、`stdout_max_bytes`、`stderr_max_bytes`、`save_output`、`timeout_seconds` | `server_id`、`stdout`、`stderr`、退出状态、时长与输出统计；保存时含 `output_id` |
 | `ssh_output` | `output_id`，可选 `stream`、`offset`、`max_bytes` | 输出页、`next_offset`、可读取量与实际接收量、保存截断和完成状态 |
 | `ssh_upload` | `server_id`、`local_path`、`remote_path`，可选 `overwrite`、`atomic`、`timeout_seconds` | 路径、字节数、时长；原子模式增加发布与清理状态 |
 | `ssh_download` | `server_id`、`local_path`、`remote_path`，可选 `overwrite`、`timeout_seconds` | 路径、字节数、时长 |
 
 参数使用 snake_case，拒绝未知字段。`ssh_list` 不联网探测，不表示在线状态。远端调用总超时默认 180 秒，范围 1–3600 秒；每跳连接与认证握手另有 15 秒上限，并受总超时约束。目标跳的 15 秒包含转发通道建立与目标认证。每次远端调用使用独立连接或单跳连接链，结束、取消或会话关闭时释放整条链。
+
+### 连接探测
+
+显式调用 `ssh_probe` 可验证当前连接、认证与 SFTP 能力。成功认证后返回 SHA256 主机密钥指纹；SFTP 打开被拒绝时，SSH 成功仍返回 `sftp.available=false` 和 `reason=subsystem_unavailable`。SFTP 成功时，`atomic_overwrite` 和 `atomic_no_overwrite` 分别表示已协商所需 POSIX rename 与 hardlink 扩展；这不保证目标文件权限或具体操作会成功。探测不执行命令、不读写远端文件，沿用主机信任策略，`accept_new` 可能追加本机 known_hosts。连接、信任或认证失败仍返回工具错误。
 
 ### 命令执行
 
@@ -109,3 +114,5 @@ stdout 最多保存 96 KiB，stderr 最多保存 32 KiB，分别排空和统计�
 超时、取消或连接中断会关闭本次连接。远端进程与文件状态可能不确定，关闭连接不保证远端进程已停止，程序不自动重试命令。
 
 stdout 专用于 MCP 协议，无启动 banner。诊断写 stderr，默认不记录凭据、完整命令、命令输出或整份工具参数。`ssh-mcp --version` 可独立查询版本。
+
+网络错误可提供 `dns_failed`、`connection_refused`、`network_unreachable`、`connection_timeout` 或 `connection_reset` 原因。它们与操作总超时、握手上限分别分类，不回显底层完整错误文本，也不据此自动重试。

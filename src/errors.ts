@@ -13,6 +13,11 @@ export function failureReason(error: unknown): string | undefined {
   if (code === 'EEXIST') return 'target_exists';
   if (code === 'ENOSPC') return 'no_space';
   if (code === 'ENOTSUP' || code === 8) return 'unsupported';
+  if (code === 'ENOTFOUND' || code === 'EAI_AGAIN') return 'dns_failed';
+  if (code === 'ECONNREFUSED') return 'connection_refused';
+  if (code === 'ENETUNREACH' || code === 'EHOSTUNREACH') return 'network_unreachable';
+  if (code === 'ETIMEDOUT') return 'connection_timeout';
+  if (code === 'ECONNRESET' || code === 'EPIPE') return 'connection_reset';
   return undefined;
 }
 export function interrupted(signal: AbortSignal): SSHError {

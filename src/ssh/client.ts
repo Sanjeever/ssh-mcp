@@ -1,18 +1,19 @@
 import { readFile } from 'node:fs/promises';
 import { Socket } from 'node:net';
+import { createHash } from 'node:crypto';
 import type { EventEmitter } from 'node:events';
 import ssh2 from 'ssh2';
 import type { Client, ClientChannel } from 'ssh2';
 import type { ConnectConfig } from 'ssh2';
 import type { Config, ServerConfig } from '../config.js';
-import { SSHError, interrupted } from '../errors.js';
+import { SSHError, interrupted, failureReason } from '../errors.js';
 import { verifyHost } from './known-hosts.js';
 import { ScopedAgent } from './agent.js';
 const { Client: SSHClient, utils } = ssh2;
 
 export class Connection {
   closed = false;
-  constructor(readonly client: Client, readonly signal: AbortSignal, private upstream?: Connection) { client.once('close', () => { this.closed = true; this.upstream?.close(); }); }
+  constructor(readonly client: Client, readonly signal: AbortSignal, private upstream?: Connection, readonly hostKeyFingerprint?: string) { client.once('close', () => { this.closed = true; this.upstream?.close(); }); }
   wait<T>(start: (done: (error: Error | undefined | null, value: T) => void) => void, source?: EventEmitter): Promise<T> {
     return new Promise((resolve, reject) => {
       let settled = false;
@@ -91,7 +92,7 @@ async function dialSingle(server: Readonly<ServerConfig>, config: Config, signal
   return new Promise((resolve, reject) => {
     const client = new SSHClient(), socket = transport ?? new Socket();
     if (socket instanceof Socket) socket.setNoDelay(true);
-    let ready = false, settled = false, tcp = !!transport, trustError: Error | undefined, phase = 'connect';
+    let ready = false, settled = false, tcp = !!transport, trustError: Error | undefined, phase = 'connect', hostKeyFingerprint: string | undefined;
     const abort = () => {
       agent?.dispose();
       client.destroy(); socket.destroy();
@@ -110,7 +111,7 @@ async function dialSingle(server: Readonly<ServerConfig>, config: Config, signal
         reject(failure instanceof SSHError ? new SSHError(failure.code, failure.message, { phase, operation_state: 'not_started', ...failure.details }) : failure);
       } else {
         ready = true;
-        resolve(new Connection(client, signal, upstream));
+        resolve(new Connection(client, signal, upstream, hostKeyFingerprint));
       }
     };
     signal.addEventListener('abort', abort, { once: true });
@@ -121,7 +122,7 @@ async function dialSingle(server: Readonly<ServerConfig>, config: Config, signal
     client.on('error', (error: Error & { level?: string }) => {
       if (!ready) finish(trustError ?? agent?.failure ?? new SSHError(error.level === 'client-authentication' ? 'ssh_auth_failed' : 'ssh_handshake_failed', error.level === 'client-authentication' ? 'SSH 认证失败，请检查服务器账号和凭据' : 'SSH 握手失败，请检查服务器 SSH 配置'));
     });
-    socket.on('error', () => { if (!ready) finish(new SSHError(tcp ? 'ssh_handshake_failed' : 'ssh_connect_failed', tcp ? 'SSH 握手连接中断' : 'SSH TCP 连接失败，请检查网络、地址和端口')); });
+    socket.on('error', error => { if (!ready) finish(new SSHError(tcp ? 'ssh_handshake_failed' : 'ssh_connect_failed', tcp ? 'SSH 握手连接中断' : 'SSH TCP 连接失败，请检查网络、地址和端口', { reason: failureReason(error) })); });
     client.once('ready', () => finish());
     client.on('handshake', () => { phase = 'authentication'; });
     const start = () => {
@@ -131,7 +132,7 @@ async function dialSingle(server: Readonly<ServerConfig>, config: Config, signal
         client.connect({ ...credentials, sock: socket, readyTimeout: 0, hostVerifier: (key: Buffer) => {
           phase = 'host_verification';
           if (signal.aborted) { trustError = interrupted(signal); return false; }
-          try { verifyHost(config.knownHosts, config.hostKeyPolicy, server.host, server.port, key); return true; }
+          try { verifyHost(config.knownHosts, config.hostKeyPolicy, server.host, server.port, key); hostKeyFingerprint = 'SHA256:' + createHash('sha256').update(key).digest('base64').replace(/=+$/, ''); return true; }
           catch (error) { trustError = error as Error; return false; }
         } });
       } catch { finish(new SSHError('ssh_handshake_failed', 'SSH 握手无法启动')); }
