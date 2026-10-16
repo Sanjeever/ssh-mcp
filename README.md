@@ -46,7 +46,7 @@ pnpm pack:check
 node dist/cli.js --version
 ```
 
-主要目录为 `src/`（应用与 SSH/SFTP）、`test/`（协议与环回集成测试）、`scripts/`（构建、打包和发布）、`docs/`（使用、设计和维护资料）。`dist/` 是生成产物。
+主要目录为 `src/`（应用与 SSH/SFTP）、`test/`（协议与环回集成测试）、`scripts/`（构建、打包和发布）、`docs/`（使用、设计和维护资料）。应用、测试和工程脚本统一使用 strict TypeScript；`dist/` 是生成产物。
 
 ## 文档入口
 

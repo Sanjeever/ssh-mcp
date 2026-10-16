@@ -40,7 +40,7 @@ stdout 是 MCP 协议通道，诊断写 stderr，不能混入启动 banner。工
 
 ## 单包分发与发布
 
-应用使用 strict TypeScript、NodeNext ESM、官方 MCP TypeScript SDK、ssh2 和 Zod，不依赖 Go 或本机 ssh/scp。采用 esbuild 将应用与运行依赖内嵌为单个 JavaScript 入口，以单个 npm 包分发，减少用户安装时的依赖下载与环境差异。选择背景及测量条件见 [0.2.0](releases/0.2.0.md) 与 [0.2.1](releases/0.2.1.md) 记录。
+应用、测试与工程脚本统一使用 strict TypeScript 和 NodeNext ESM，类型检查覆盖全部维护源码。测试与工程脚本通过开发依赖 tsx 执行，用户安装包仍运行构建后的 JavaScript。应用使用官方 MCP TypeScript SDK、ssh2 和 Zod，不依赖 Go 或本机 ssh/scp。采用 esbuild 将应用与运行依赖内嵌为单个 JavaScript 入口，以单个 npm 包分发，减少用户安装时的依赖下载与环境差异。选择背景及测量条件见 [0.2.0](releases/0.2.0.md) 与 [0.2.1](releases/0.2.1.md) 记录。
 
 ssh2 使用 JavaScript 加密实现与内嵌 WASM，不加载可选原生加速模块，保证用户无需编译工具或安装脚本。构建必须拒绝非 Node 内置的外部导入，并保留实际内嵌依赖的许可。依赖版本在开发依赖与锁文件固定；安装和首次启动不下载应用二进制、不运行构建工具、不要求开发依赖。
 
