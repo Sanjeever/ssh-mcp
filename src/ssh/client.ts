@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { Socket } from 'node:net';
+import type { EventEmitter } from 'node:events';
 import ssh2 from 'ssh2';
 import type { Client } from 'ssh2';
 import type { ConnectConfig } from 'ssh2';
@@ -10,12 +11,14 @@ const { Client: SSHClient, utils } = ssh2;
 
 export class Connection {
   constructor(readonly client: Client, readonly signal: AbortSignal) {}
-  wait<T>(start: (done: (error: Error | undefined | null, value: T) => void) => void): Promise<T> {
+  wait<T>(start: (done: (error: Error | undefined | null, value: T) => void) => void, source?: EventEmitter): Promise<T> {
     return new Promise((resolve, reject) => {
       const finish = (error?: Error | null, value?: T) => {
         this.signal.removeEventListener('abort', abort);
         this.client.off('close', closed);
         this.client.off('error', failed);
+        source?.off('close', closed);
+        source?.off('error', failed);
         error ? reject(error) : resolve(value!);
       };
       const abort = () => finish(interrupted(this.signal));
@@ -25,6 +28,8 @@ export class Connection {
       this.signal.addEventListener('abort', abort, { once: true });
       this.client.once('close', closed);
       this.client.once('error', failed);
+      source?.once('close', closed);
+      source?.once('error', failed);
       try { start(finish); } catch (error) { finish(error as Error); }
     });
   }
