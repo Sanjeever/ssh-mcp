@@ -35,7 +35,9 @@ export async function measure(command, args, samples = 30) {
     });
   }
   values.sort((a, b) => a - b);
-  return { samples, median_ms: +values[Math.floor(samples / 2)].toFixed(2), p95_ms: +values[Math.ceil(samples * .95) - 1].toFixed(2), node: process.version, command, args };
+  const middle = Math.floor(samples / 2);
+  const median = samples % 2 ? values[middle] : (values[middle - 1] + values[middle]) / 2;
+  return { samples, median_ms: +median.toFixed(2), p95_ms: +values[Math.ceil(samples * .95) - 1].toFixed(2), node: process.version, command, args };
 }
 
 if (process.argv[1]?.endsWith('benchmark.mjs')) {
