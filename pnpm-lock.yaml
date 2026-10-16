@@ -27,37 +27,6 @@ importers:
       typescript:
         specifier: 7.0.2
         version: 7.0.2
-    optionalDependencies:
-      '@sanjeever/ssh-mcp-darwin-arm64':
-        specifier: 0.1.1
-        version: link:dist/npm/darwin-arm64
-      '@sanjeever/ssh-mcp-darwin-x64':
-        specifier: 0.1.1
-        version: link:dist/npm/darwin-x64
-      '@sanjeever/ssh-mcp-linux-arm64':
-        specifier: 0.1.1
-        version: link:dist/npm/linux-arm64
-      '@sanjeever/ssh-mcp-linux-x64':
-        specifier: 0.1.1
-        version: link:dist/npm/linux-x64
-      '@sanjeever/ssh-mcp-win32-arm64':
-        specifier: 0.1.1
-        version: link:dist/npm/win32-arm64
-      '@sanjeever/ssh-mcp-win32-x64':
-        specifier: 0.1.1
-        version: link:dist/npm/win32-x64
-
-  dist/npm/darwin-arm64: {}
-
-  dist/npm/darwin-x64: {}
-
-  dist/npm/linux-arm64: {}
-
-  dist/npm/linux-x64: {}
-
-  dist/npm/win32-arm64: {}
-
-  dist/npm/win32-x64: {}
 
 packages:
 

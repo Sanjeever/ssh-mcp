@@ -2,8 +2,8 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 
 // 使用实际 stdio 消息检查安装后的可执行文件，测试数据不指向公网服务器。
-export async function smoke(command, args, env) {
-  const child = spawn(command, args, { env, stdio: ['pipe', 'pipe', 'pipe'], shell: false });
+export async function smoke(command, args, env, cwd) {
+  const child = spawn(command, args, { env, cwd, stdio: ['pipe', 'pipe', 'pipe'], shell: false });
   let buffer = '', stderr = '';
   const timer = setTimeout(() => { child.kill(); }, 10_000);
   const responses = new Map();

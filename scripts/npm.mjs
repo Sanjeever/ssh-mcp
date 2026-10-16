@@ -1,6 +1,6 @@
 import { existsSync, realpathSync } from 'node:fs';
 import { delimiter, dirname, join } from 'node:path';
-import { run } from './build.mjs';
+import { run } from './process.mjs';
 
 // 直接运行 npm CLI 的 JS 入口，避免 Windows .cmd 需要 Shell 解释。
 export function npm(args, options = {}) {

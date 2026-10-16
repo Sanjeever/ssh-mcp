@@ -11,10 +11,10 @@
   "homepage": "https://github.com/Sanjeever/ssh-mcp#readme",
   "bugs": "https://github.com/Sanjeever/ssh-mcp/issues",
   "bin": {
-    "ssh-mcp": "bin/ssh-mcp.cjs"
+    "ssh-mcp": "dist/cli.js"
   },
   "files": [
-    "bin/ssh-mcp.cjs",
+    "dist/**/*.js",
     "LICENSE",
     "README.md"
   ],
@@ -27,22 +27,11 @@
   "packageManager": "pnpm@11.20.0",
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "build:ts": "tsc",
-    "test:ts": "pnpm build:ts && node --test test/*.test.mjs",
-    "test": "node --test bin/ssh-mcp.test.cjs scripts/version.test.mjs scripts/release.test.mjs",
-    "metadata": "node scripts/build.mjs metadata",
-    "build": "node scripts/build.mjs build",
+    "test": "node --test test/*.test.mjs scripts/*.test.mjs",
+    "build": "node scripts/build.mjs",
     "pack:check": "node scripts/pack-check.mjs",
     "bump": "node scripts/version.mjs bump",
     "version:check": "node scripts/version.mjs check"
-  },
-  "optionalDependencies": {
-    "@sanjeever/ssh-mcp-darwin-arm64": "0.1.1",
-    "@sanjeever/ssh-mcp-darwin-x64": "0.1.1",
-    "@sanjeever/ssh-mcp-linux-arm64": "0.1.1",
-    "@sanjeever/ssh-mcp-linux-x64": "0.1.1",
-    "@sanjeever/ssh-mcp-win32-arm64": "0.1.1",
-    "@sanjeever/ssh-mcp-win32-x64": "0.1.1"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.32.1",

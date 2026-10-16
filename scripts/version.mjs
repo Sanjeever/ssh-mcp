@@ -1,8 +1,7 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { root, metadata } from './build.mjs';
-import { platforms } from './platforms.mjs';
+import { root } from './process.mjs';
 
 const pattern = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 export function validVersion(value) {
@@ -13,12 +12,11 @@ function checkNotes(base, version) {
   try { notes = readFileSync(join(base, 'docs/releases', `${version}.md`), 'utf8'); }
   catch { throw new Error(`缺少更新日志 docs/releases/${version}.md`); }
   if (!notes.trim()) throw new Error(`更新日志不能为空 docs/releases/${version}.md`);
+  if (!/[\u3400-\u9fff]/u.test(notes)) throw new Error(`更新日志须包含中文 docs/releases/${version}.md`);
 }
 export function check(base, tag) {
   const pkg = JSON.parse(readFileSync(join(base, 'package.json'), 'utf8'));
   if (!validVersion(pkg.version) || tag !== `v${pkg.version}`) throw new Error('标签必须为 vMAJOR.MINOR.PATCH，并与 package.json 版本一致');
-  const dependencies = pkg.optionalDependencies ?? {};
-  if (Object.keys(dependencies).length !== platforms.length || platforms.some(p => dependencies[p.name] !== pkg.version)) throw new Error('入口包必须精确依赖同版本的六个平台包');
   checkNotes(base, pkg.version);
   return pkg.version;
 }
@@ -28,9 +26,7 @@ export function bump(base, version) {
   const path = join(base, 'package.json');
   const pkg = JSON.parse(readFileSync(path, 'utf8'));
   pkg.version = version;
-  pkg.optionalDependencies = Object.fromEntries(platforms.map(p => [p.name, version]));
   writeFileSync(path, JSON.stringify(pkg, null, 2) + '\n');
-  metadata(base);
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

@@ -14,7 +14,7 @@ test('恢复发布只跳过完整性匹配的版本，拒绝其他 registry 错�
 });
 test('发布错误向上传递，不将发布失败当成已存在', () => {
   let calls = 0;
-  const pkg = { name: '@sanjeever/ssh-mcp-linux-x64', filename: 'test.tgz', integrity: 'sha512-test' };
+  const pkg = { name: '@sanjeever/ssh-mcp', filename: 'test.tgz', integrity: 'sha512-test' };
   assert.throws(() => publishPackage(pkg, '0.1.0', args => {
     calls++;
     if (args[0] === 'view') return response(1, { error: { code: 'E404' } });

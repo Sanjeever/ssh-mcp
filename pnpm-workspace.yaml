@@ -1,8 +1,4 @@
-packages:
-  - 'dist/npm/*'
-
+# 单包安装策略；ssh2 的可选原生加速不参与开发与构建。
 allowBuilds:
-  cpu-features: false
   ssh2: false
-
-linkWorkspacePackages: true
+  cpu-features: false
