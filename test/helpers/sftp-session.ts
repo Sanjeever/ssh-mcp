@@ -14,6 +14,10 @@ export interface SFTPOptions {
   failClose?: boolean;
   failSetstat?: boolean;
   failUnlink?: boolean;
+  failWriteAt?: number;
+  delayMs?: number;
+  readDelayMs?: (offset: number) => number;
+  shortReadBytes?: number;
   hangRead?: boolean;
   hangWrite?: boolean;
 }
@@ -58,16 +62,20 @@ export function sftpSession(root: string, options: SFTPOptions = {}) {
       if (options.hangRead) return;
       options.onRead?.(offset);
       if (options.failReadAt !== undefined && offset >= options.failReadAt) return status(id, new Error('读取失败'));
-      const buffer = Buffer.alloc(length);
-      fs.read(descriptor(handle), buffer, 0, length, offset, (error, bytes) => {
+      const buffer = Buffer.alloc(Math.min(length, options.shortReadBytes ?? length)), fd = descriptor(handle);
+      const read = () => fs.read(fd, buffer, 0, buffer.length, offset, (error, bytes) => {
         if (error) return status(id, error);
         if (!closed) bytes ? sftp.data(id, buffer.subarray(0, bytes)) : sftp.status(id, 1);
       });
+      const latency = options.readDelayMs?.(offset) ?? options.delayMs ?? 0;
+      if (latency) setTimeout(read, latency); else read();
     });
     sftp.on('WRITE', (id, handle, offset, data) => {
       options.onWrite?.(offset);
       if (options.hangWrite) return;
-      fs.write(descriptor(handle), data, 0, data.length, offset, error => status(id, error));
+      if (options.failWriteAt !== undefined && offset >= options.failWriteAt) { sftp.status(id, 4); return; }
+      const fd = descriptor(handle), write = () => fs.write(fd, data, 0, data.length, offset, error => status(id, error));
+      if (options.delayMs) setTimeout(write, options.delayMs); else write();
     });
     sftp.on('CLOSE', (id, handle) => {
       const idString = handle.toString('hex'), fd = descriptor(handle); handles.delete(idString);

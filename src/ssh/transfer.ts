@@ -6,10 +6,12 @@ import type { SFTPWrapper, Stats } from 'ssh2';
 import type { Connection } from './client.js';
 import { SSHError, interrupted, failureReason } from '../errors.js';
 import type { OperationContext } from '../errors.js';
+import { copyLimited, MAX_TRANSFER_BYTES } from './copy.js';
+export { copyLimited, MAX_TRANSFER_BYTES } from './copy.js';
+import type { CopyOptions } from './copy.js';
 
-export const MAX_TRANSFER_BYTES = 128 * 1024 * 1024;
 export interface TransferResult { bytes_transferred: number; publication_state?: 'not_published' | 'unknown' | 'published'; temporary_path?: string; cleanup_pending?: boolean }
-export interface TransferOptions { atomic?: boolean }
+export interface TransferOptions extends CopyOptions { atomic?: boolean }
 const failed = (message: string) => new SSHError('ssh_transfer_failed', message);
 const invalid = () => new SSHError('ssh_transfer_invalid', '传输源必须是可访问的单个普通文件，目标不能是目录或符号链接，源文件不能超过 128 MiB');
 export function validatePaths(local: string, remote: string) {
@@ -24,24 +26,10 @@ async function localTarget(local: string, overwrite: boolean) {
   } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
 }
 
-// 每次读取和写入均等待完成，自然施加背压；额外读取一个字节检查源在传输中增长。
-export async function copyLimited(read: (buffer: Buffer, position: number) => Promise<number>, write: (buffer: Buffer, position: number) => Promise<void>, result: TransferResult, signal: AbortSignal, limit = MAX_TRANSFER_BYTES) {
-  const buffer = Buffer.alloc(64 * 1024);
-  while (true) {
-    if (signal.aborted) throw interrupted(signal);
-    const remaining = limit - result.bytes_transferred;
-    const count = await read(buffer.subarray(0, Math.min(buffer.length, remaining || 1)), result.bytes_transferred);
-    if (signal.aborted) throw interrupted(signal);
-    if (!count) return;
-    if (!remaining) throw new SSHError('ssh_transfer_limit', '文件在传输中超过 128 MiB 上限，上传可能遗留部分文件，下载原目标未替换');
-    await write(buffer.subarray(0, count), result.bytes_transferred);
-    result.bytes_transferred += count;
-  }
-}
-
 export async function transfer(connection: Connection, direction: 'upload' | 'download', local: string, remote: string, overwrite: boolean, result: TransferResult, context: OperationContext = { phase: 'open', operation_state: 'not_started' }, options: TransferOptions = {}) {
   validatePaths(local, remote);
   const atomic = direction === 'upload' && options.atomic === true;
+  const copyOptions = { ...options, onFailure: () => connection.close() };
   if (atomic) result.publication_state = 'not_published';
   let file: FileHandle | undefined, sftp: SFTPWrapper | undefined, handle: Buffer | undefined, temp: string | undefined, remoteTemp: string | undefined, existing: Stats | undefined, sftpClosed = false;
   let failure: unknown;
@@ -80,7 +68,7 @@ export async function transfer(connection: Connection, direction: 'upload' | 'do
       context.phase = 'write';
       const target = handle, source = file!;
       await copyLimited(async (buffer, position) => (await source.read(buffer, 0, buffer.length, position)).bytesRead,
-        (buffer, position) => wait<void>(done => files.write(target, buffer, 0, buffer.length, position, done)), result, connection.signal);
+        (buffer, position) => wait<void>(done => files.write(target, buffer, 0, buffer.length, position, done)), result, connection.signal, MAX_TRANSFER_BYTES, copyOptions);
       if (atomic && existing) {
         context.phase = 'metadata';
         const current = await wait<Stats>(done => files.fstat(target, done));
@@ -106,7 +94,7 @@ export async function transfer(connection: Connection, direction: 'upload' | 'do
             if (!bytesWritten) throw failed('本地文件写入未取得进展');
             offset += bytesWritten;
           }
-        }, result, connection.signal);
+        }, result, connection.signal, MAX_TRANSFER_BYTES, copyOptions);
       await target.sync();
     }
     const remoteHandle = handle;

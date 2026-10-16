@@ -92,3 +92,7 @@ node --import=tsx scripts/benchmark.ts node dist/cli.js
 第二项先预热 npm exec 缓存，并在仓库外运行，tsx、脚本与包路径使用绝对路径，避免解析到当前项目。脚本只初始化 MCP，不连接示例地址对应的 SSH 服务器。
 
 直接入口、缓存启动与首次安装分开记录，说明样本数、运行环境和缓存条件。`--version` 耗时不能替代初始化耗时。本地 tarball 不等于公开 registry 首次 npx 安装，不以不稳定公网耗时作为 CI 门槛。历史测量见对应[版本记录](releases/)。
+
+## 文件传输性能测量
+
+`node --import=tsx scripts/benchmark-transfer.ts` 使用环回 SSH/SFTP 服务，对比窗口 1 与 4 的上传和下载，注入每次读写请求 0、50、100 ms 延迟。默认测量 1 KiB、4 MiB，以及零延迟下的 120 MiB 文件；加 `--full` 扩展到所有大小与延迟组合。输出包含时长、吞吐和采样峰值内存，内存统计包含同进程测试服务端，单次样本用于本机对比，不等于公网带宽或独立客户端内存。

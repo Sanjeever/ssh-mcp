@@ -20,6 +20,7 @@ export function startCLI(t: Pick<TestContext, 'after'>, extraEnv: NodeJS.Process
   t.after(() => child.kill());
   let buffer = '', stderr = '', nextID = 0;
   const pending = new Map<number, { resolve: (value: unknown) => void; reject: (error: Error) => void; timer: NodeJS.Timeout }>();
+  const notifications: { method: string; params?: Record<string, unknown> }[] = [];
   const closed = once(child, 'close');
   child.once('close', () => { for (const entry of pending.values()) { clearTimeout(entry.timer); entry.reject(new Error('MCP 会话关闭')); } pending.clear(); });
   child.stderr.on('data', chunk => { stderr += chunk; });
@@ -28,6 +29,7 @@ export function startCLI(t: Pick<TestContext, 'after'>, extraEnv: NodeJS.Process
     let newline;
     while ((newline = buffer.indexOf('\n')) >= 0) {
       const message = JSON.parse(buffer.slice(0, newline)); buffer = buffer.slice(newline + 1);
+      if (message.method) notifications.push(message);
       const entry = pending.get(message.id);
       if (entry) { clearTimeout(entry.timer); pending.delete(message.id); message.error ? entry.reject(new Error(JSON.stringify(message.error))) : entry.resolve(message.result); }
     }
@@ -45,7 +47,7 @@ export function startCLI(t: Pick<TestContext, 'after'>, extraEnv: NodeJS.Process
     send({ id, method, params });
     return { id, result: result.then(value => responseSchemas[method].parse(value)) };
   }
-  return { child, closed, request, send, diagnostics: () => stderr, async init() {
+  return { child, closed, request, send, notifications: () => notifications, diagnostics: () => stderr, async init() {
     const result = await request('initialize', { protocolVersion: '2025-11-25', capabilities: {}, clientInfo: { name: 'test', version: '1' } }).result;
     send({ method: 'notifications/initialized' }); return result;
   } };

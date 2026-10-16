@@ -41,6 +41,13 @@ export function createServer(config: Config, version: string, root: AbortSignal)
     const start = performance.now(), op = operationSignal(AbortSignal.any([root, extra.signal]), input.timeout_seconds);
     const execution = createExecResult();
     const progress: TransferResult = { bytes_transferred: 0 };
+    const token = request.params._meta?.progressToken;
+    let lastProgress = -Infinity, lastBytes = 0;
+    const notifyProgress = async (bytes: number, final = false) => {
+      if (token === undefined || op.signal.aborted || bytes <= lastBytes || !final && performance.now() - lastProgress < 250) return;
+      lastProgress = performance.now(); lastBytes = bytes;
+      await extra.sendNotification({ method: 'notifications/progress', params: { progressToken: token, progress: bytes, message: '文件传输' } });
+    };
     const context: OperationContext = { phase: 'validation', operation_state: 'not_started' };
     let error: Record<string, unknown> | undefined;
     try {
@@ -50,7 +57,10 @@ export function createServer(config: Config, version: string, root: AbortSignal)
       context.phase = 'connect';
       const connection = await dial(target, config, op.signal, op.deadline);
       try {
-        if ('local_path' in input) await transfer(connection, request.params.name === 'ssh_upload' ? 'upload' : 'download', input.local_path, input.remote_path, input.overwrite, progress, context, { atomic: 'atomic' in input && input.atomic === true });
+        if ('local_path' in input) {
+          await transfer(connection, request.params.name === 'ssh_upload' ? 'upload' : 'download', input.local_path, input.remote_path, input.overwrite, progress, context, { atomic: 'atomic' in input && input.atomic === true, onProgress: bytes => notifyProgress(bytes) });
+          await notifyProgress(progress.bytes_transferred, true);
+        }
         else await exec(connection, input.command, execution, context, input);
       } finally { connection.close(); }
     } catch (failure) {

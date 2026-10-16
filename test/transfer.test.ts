@@ -65,9 +65,9 @@ test('并发禁止覆盖与发布前冲突保护', async t => {
   assert.equal(readFileSync(join(race.root, 'target'), 'utf8'), '竞争目标');
 });
 test('传输失败、关闭失败与取消清理临时文件并保留原目标', async t => {
-  for (const options of [{ failReadAt: 65536 }, { failClose: true }, { hangRead: true }]) {
+  for (const options of [{ failReadAt: 4 * 65536 }, { failClose: true }, { hangRead: true }]) {
     const s = await fixture(t, options), target = join(s.root, 'target');
-    writeFileSync(join(s.root, 'payload'), Buffer.alloc(200000)); writeFileSync(target, '原内容');
+    writeFileSync(join(s.root, 'payload'), Buffer.alloc(800000)); writeFileSync(target, '原内容');
     const op = operationSignal(new AbortController().signal, options.hangRead ? 3 : 10), progress = { bytes_transferred: 0 };
     try { await assert.rejects(s.run('download', target, '/payload', true, op.signal, progress), { code: options.hangRead ? 'ssh_timeout' : 'ssh_transfer_failed' }); } finally { op.dispose(); }
     assert.equal(readFileSync(target, 'utf8'), '原内容'); assert(!readdirSync(s.root).some(name => name.startsWith('.ssh-download-')));
@@ -77,6 +77,32 @@ test('传输失败、关闭失败与取消清理临时文件并保留原目标',
   const s = await fixture(t, { hangWrite: true, onWrite: () => controller.abort() }), local = join(s.root, 'source'); writeFileSync(local, 'payload');
   await assert.rejects(s.run('upload', local, '/payload', false, controller.signal), { code: 'ssh_canceled' });
   assert(readdirSync(s.root).includes('payload'));
+});
+test('并发短读和乱序响应保持内容，写入失败停止在途请求', async t => {
+  const s = await fixture(t, { shortReadBytes: 8192, readDelayMs: offset => offset < 65536 ? 4 : 1 });
+  const data = Buffer.from('乱序传输\n'.repeat(50000)); writeFileSync(join(s.root, 'payload'), data);
+  const target = join(s.root, 'target');
+  assert.equal(await s.run('download', target, '/payload'), data.length); assert.deepEqual(readFileSync(target), data);
+  const failed = await fixture(t, { failWriteAt: 65536, delayMs: 30 }), source = join(failed.root, 'source'); writeFileSync(source, data);
+  await assert.rejects(failed.run('upload', source, '/payload'), { code: 'ssh_transfer_failed' });
+  for (let i = 0; failed.clients.size && i < 100; i++) await delay(10);
+  assert.equal(failed.clients.size, 0);
+});
+test('MCP 传输进度遵循 token、递增并在结果前结束', async t => {
+  const s = await fixture(t, { delayMs: 10 }), source = join(s.root, 'source'); writeFileSync(source, Buffer.alloc(800000));
+  const p = startCLI(t, { SSH_MCP_SERVER_TEST_HOST: s.config.host, SSH_MCP_SERVER_TEST_PORT: String(s.config.port), SSH_MCP_KNOWN_HOSTS: join(s.root, 'known_hosts') });
+  await p.init();
+  const call = { name: 'ssh_upload', arguments: { server_id: 'test', local_path: source, remote_path: '/progress' }, _meta: { progressToken: 'transfer-1' } };
+  assert.equal((await p.request('tools/call', call).result).isError, false);
+  const updates = p.notifications().filter(n => n.method === 'notifications/progress');
+  assert(updates.length >= 2);
+  assert(updates.every(n => n.params?.progressToken === 'transfer-1'));
+  assert.equal(updates.at(-1)?.params?.progress, 800000);
+  for (let i = 1; i < updates.length; i++) assert(Number(updates[i]!.params?.progress) > Number(updates[i - 1]!.params?.progress));
+  await delay(30); assert.equal(p.notifications().length, updates.length);
+  assert.equal((await p.request('tools/call', { name: 'ssh_download', arguments: { server_id: 'test', local_path: join(s.root, 'download'), remote_path: '/progress' } }).result).isError, false);
+  assert.equal(p.notifications().length, updates.length);
+  p.child.stdin.end(); await p.closed;
 });
 test('大小预检及实际读取上限覆盖源增长', { timeout: 60000 }, async t => {
   const s = await fixture(t), source = join(s.root, 'source');
