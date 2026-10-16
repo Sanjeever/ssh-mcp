@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { writeFileSync, readFileSync, readdirSync, symlinkSync, openSync, closeSync, ftruncateSync } from 'node:fs';
 import { join } from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 import { dial } from '../dist/ssh/client.js';
 import { transfer, copyLimited, MAX_TRANSFER_BYTES } from '../dist/ssh/transfer.js';
 import { operationSignal } from '../dist/errors.js';
@@ -97,4 +98,23 @@ test('真实 stdio 四工具发现与 SFTP 调用', async t => {
   }
   assert.equal(readFileSync(target, 'utf8'), 'MCP 文件');
   p.child.stdin.end(); assert.equal((await p.closed)[0], 0); assert.equal(p.diagnostics(), '');
+});
+test('SFTP 子系统等待取消与 stdio 下载取消和 EOF 清理', async t => {
+  const waiting = await startSSH(t, { session: session => session.on('sftp', () => {}) });
+  const op = operationSignal(new AbortController().signal, .1);
+  const c = await dial(waiting.config, { knownHosts: join(waiting.root, 'known_hosts'), hostKeyPolicy: 'accept_new' }, op.signal);
+  try { await assert.rejects(transfer(c, 'download', join(waiting.root, 'target'), '/payload', false, { bytes_transferred: 0 }), { code: 'ssh_timeout' }); } finally { c.close(); op.dispose(); }
+  for (const mode of ['cancel', 'eof']) {
+    const s = await fixture(t, { hangRead: true }), target = join(s.root, 'target');
+    writeFileSync(join(s.root, 'payload'), 'payload'); writeFileSync(target, '原内容');
+    const p = startCLI(t, { SSH_MCP_SERVER_TEST_HOST: s.config.host, SSH_MCP_SERVER_TEST_PORT: String(s.config.port), SSH_MCP_KNOWN_HOSTS: join(s.root, 'known_hosts') });
+    await p.init();
+    const request = p.request('tools/call', { name: 'ssh_download', arguments: { server_id: 'test', local_path: target, remote_path: '/payload', overwrite: true } }); request.result.catch(() => {});
+    for (let i = 0; !readdirSync(s.root).some(name => name.startsWith('.ssh-download-')) && i < 100; i++) await delay(10);
+    assert(readdirSync(s.root).some(name => name.startsWith('.ssh-download-')));
+    if (mode === 'cancel') p.send({ method: 'notifications/cancelled', params: { requestId: request.id } }); else p.child.stdin.end();
+    for (let i = 0; readdirSync(s.root).some(name => name.startsWith('.ssh-download-')) && i < 100; i++) await delay(10);
+    assert(!readdirSync(s.root).some(name => name.startsWith('.ssh-download-'))); assert.equal(readFileSync(target, 'utf8'), '原内容');
+    if (mode === 'cancel') p.child.stdin.end(); assert.equal((await p.closed)[0], 0); assert.equal(p.diagnostics(), '');
+  }
 });

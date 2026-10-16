@@ -32,7 +32,7 @@ export function createServer(config: Config, version: string, root: AbortSignal)
     if (request.params.name === 'ssh_list') return respond({ servers: [...config.servers.values()].map(s => ({ server_id: s.id, description: s.description, host: s.host, port: s.port, username: s.username, auth_type: s.privateKeyPath ? 'private_key' : 'password' })) });
     const isTransfer = request.params.name !== 'ssh_exec';
     const input = isTransfer ? transferInput.parse(request.params.arguments) : execInput.parse(request.params.arguments);
-    const start = Date.now(), op = operationSignal(AbortSignal.any([root, extra.signal]), input.timeout_seconds);
+    const start = performance.now(), op = operationSignal(AbortSignal.any([root, extra.signal]), input.timeout_seconds);
     const execution = { stdout: '', stderr: '', exit_code: null as number | null, output_truncated: false };
     const progress = { bytes_transferred: 0 };
     let error: { code: string; message: string } | undefined;
@@ -48,7 +48,7 @@ export function createServer(config: Config, version: string, root: AbortSignal)
     } catch (failure) {
       error = failure instanceof SSHError ? { code: failure.code, message: failure.message } : { code: 'ssh_error', message: 'SSH 操作失败，远端状态可能不确定，请检查后再操作' };
     } finally { op.dispose(); }
-    const result = { server_id: input.server_id, duration_ms: Date.now() - start, ...('local_path' in input ? { local_path: input.local_path, remote_path: input.remote_path, ...progress } : execution) };
+    const result = { server_id: input.server_id, duration_ms: Math.floor(performance.now() - start), ...('local_path' in input ? { local_path: input.local_path, remote_path: input.remote_path, ...progress } : execution) };
     return respond({ ...result, ...(error ? { error } : {}) }, !!error);
   });
   return server;

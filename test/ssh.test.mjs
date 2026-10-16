@@ -28,6 +28,8 @@ test('密码、普通私钥、加密私钥与认证拒绝', async t => {
   await assert.rejects(dial({ ...s.config, password: 'wrong' }, cfg(s, 'strict'), new AbortController().signal), code('ssh_auth_failed'));
   const keyPath = join(s.root, 'encrypted');
   await assert.rejects(dial({ ...s.config, privateKeyPath: keyPath, passphrase: 'wrong' }, cfg(s), new AbortController().signal), code('ssh_credentials_invalid'));
+  const publicPath = join(s.root, 'public'); writeFileSync(publicPath, line('host', s.publicKey).slice(5));
+  await assert.rejects(dial({ ...s.config, privateKeyPath: publicPath }, cfg(s), new AbortController().signal), code('ssh_credentials_invalid'));
   assert(s.authCount() >= 4);
 });
 
@@ -45,6 +47,7 @@ test('主机规则、哈希、IPv6、端口、否定、撤销及 CA 拒绝', asy
   assert.equal(checkTrust(line('one,*.example.com,!bad.example.com', key), 'ok.example.com', 22, key), 'known');
   assert.equal(checkTrust(line('one,*.example.com,!bad.example.com', key), 'bad.example.com', 22, key), 'unknown');
   assert.equal(checkTrust(line('s?rver', key), 'server', 22, key), 'known');
+  assert.equal(checkTrust(line('server:2222', key), 'server', 2222, key), 'known');
   assert.equal(checkTrust(line('*.example.com', key), 'ok.example.com', 2222, key), 'unknown');
   assert.throws(() => checkTrust('@revoked ' + line('unrelated', key), 'example.com', 22, key), code('ssh_host_key_rejected'));
   assert.throws(() => checkTrust('@cert-authority ' + line('*', key), 'example.com', 22, key), code('ssh_host_key_rejected'));
@@ -93,4 +96,13 @@ test('握手取消、总超时与 15 秒上限分别分类且关闭 socket', { t
   const controller = new AbortController(); setTimeout(() => controller.abort(), 30);
   await assert.rejects(dial(target, cfg(s), controller.signal), code('ssh_canceled'));
   await new Promise(resolve => setTimeout(resolve, 30)); assert.equal(sockets.size, 0);
+});
+test('TCP 拒绝与认证等待取消保留错误分类', async t => {
+  const s = await startSSH(t, { hangAuth: true });
+  const controller = new AbortController(), promise = dial(s.config, cfg(s), controller.signal);
+  for (let i = 0; !s.authCount() && i < 100; i++) await new Promise(resolve => setTimeout(resolve, 5));
+  assert(s.authCount() > 0); controller.abort(); await assert.rejects(promise, code('ssh_canceled'));
+  const server = createServer(); server.listen(0, '127.0.0.1'); await once(server, 'listening');
+  const port = server.address().port; server.close(); await once(server, 'close');
+  await assert.rejects(dial({ ...s.config, port }, cfg(s), new AbortController().signal), code('ssh_connect_failed'));
 });

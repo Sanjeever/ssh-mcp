@@ -9,7 +9,7 @@ export function operationSignal(parent: AbortSignal, seconds = 180) {
   const abort = () => controller.abort(interrupted(parent));
   if (parent.aborted) abort();
   else parent.addEventListener('abort', abort, { once: true });
-  const deadline = Date.now() + seconds * 1000;
+  const deadline = performance.now() + seconds * 1000;
   const timer = setTimeout(() => controller.abort(new SSHError('ssh_timeout', 'SSH 操作超时；远端进程或文件状态可能不确定，关闭连接不保证远端进程已停止，请检查后再操作')), seconds * 1000);
   return { signal: controller.signal, deadline, dispose() { clearTimeout(timer); parent.removeEventListener('abort', abort); } };
 }

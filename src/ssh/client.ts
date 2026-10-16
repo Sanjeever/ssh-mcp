@@ -43,7 +43,7 @@ export async function dial(server: Readonly<ServerConfig>, config: Config, signa
     try {
       const data = await readFile(server.privateKeyPath, { signal });
       const key = utils.parseKey(data, server.passphrase || undefined);
-      if (key instanceof Error) throw key;
+      if (key instanceof Error || !key.isPrivateKey()) throw new Error('无有效私钥');
       credentials.privateKey = data;
       credentials.passphrase = server.passphrase;
     } catch {
@@ -58,7 +58,7 @@ export async function dial(server: Readonly<ServerConfig>, config: Config, signa
       client.destroy(); socket.destroy();
       if (!ready) finish(interrupted(signal));
     };
-    const timer = setTimeout(() => finish(Date.now() >= deadline ? new SSHError('ssh_timeout', 'SSH 操作超时；远端进程或文件状态可能不确定，请检查后再操作') : new SSHError('ssh_handshake_timeout', 'SSH 连接或认证握手超过 15 秒')), 15000);
+    const timer = setTimeout(() => finish(performance.now() >= deadline ? new SSHError('ssh_timeout', 'SSH 操作超时；远端进程或文件状态可能不确定，请检查后再操作') : new SSHError('ssh_handshake_timeout', 'SSH 连接或认证握手超过 15 秒')), 15000);
     const finish = (error?: Error) => {
       clearTimeout(timer);
       if (error) {

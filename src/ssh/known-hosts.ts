@@ -33,6 +33,12 @@ function matcher(pattern: string): (host: string, port: number) => boolean {
       const match = /^\[(.+)\]:(\d+)$/.exec(value);
       if (!match || +match[2]! < 1 || +match[2]! > 65535) throw invalid();
       value = match[1]!; port = +match[2]!;
+    } else {
+      const match = /^([^:]+):(\d+)$/.exec(value);
+      if (match) {
+        if (+match[2]! < 1 || +match[2]! > 65535) throw invalid();
+        value = match[1]!; port = +match[2]!;
+      }
     }
     const regex = new RegExp('^' + value.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*').replace(/\?/g, '.') + '$');
     return { negate, port, regex };
