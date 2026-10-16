@@ -38,8 +38,14 @@ test('同步和异步共用限额，排队时间计入总超时，取消排队�
   const p = startCLI(t, { SSH_MCP_SERVER_TEST_HOST: s.config.host, SSH_MCP_SERVER_TEST_PORT: String(s.config.port), SSH_MCP_KNOWN_HOSTS: join(s.root, 'known_hosts'), SSH_MCP_MAX_CONCURRENT: '1', SSH_MCP_MAX_CONCURRENT_PER_SERVER: '1', SSH_MCP_MAX_QUEUE: '1' });
   await p.init();
   const first = await p.request('tools/call', { name: 'ssh_exec_start', arguments: { server_id: 'test', command: 'hang' } }).result;
-  for (let attempt = 0; !s.authCount() && attempt < 100; attempt++) await delay(10);
-  assert(s.authCount() > 0);
+  // 服务端分别统计 none 和 password 认证请求；须等认证完成，不能在两者之间取样。
+  let firstOutput: unknown;
+  for (let attempt = 0; firstOutput !== 'partial' && attempt < 100; attempt++) {
+    const output = await p.request('tools/call', { name: 'ssh_output', arguments: { output_id: first.structuredContent?.output_id } }).result;
+    firstOutput = output.structuredContent?.text;
+    if (firstOutput !== 'partial') await delay(10);
+  }
+  assert.equal(firstOutput, 'partial');
   const authBefore = s.authCount();
   const queued = p.request('tools/call', { name: 'ssh_exec', arguments: { server_id: 'test', command: 'ok', timeout_seconds: 1 } }).result;
   await delay(30);
