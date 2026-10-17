@@ -44,6 +44,14 @@ test('独立 OpenSSH：主机信任、stdin、退出状态和原子上传', { sk
   const edited = await p.request('tools/call', { name: 'ssh_edit_file', arguments: { server_id: 'test', remote_path: textPath, old_text: 'name=old', new_text: 'name=new', expected_revision: textRead.structuredContent?.revision } }).result;
   assert.equal(edited.isError, false); assert.equal(edited.structuredContent?.publication_state, 'published'); assert.equal(edited.structuredContent?.replacements, 1);
   assert.equal(readFileSync(textPath, 'utf8'), 'name=new\r\n备注=中文\r\n'); assert.equal(statSync(textPath).mode & 0o777, 0o640);
+  const metadata = statSync(textPath);
+  const batch = await p.request('tools/call', { name: 'ssh_edit_file', arguments: { server_id: 'test', remote_path: textPath, edits: [{ old_text: '备注=中文', new_text: '备注=更新😀' }, { old_text: 'name=new', new_text: 'name=batch' }], expected_revision: edited.structuredContent?.revision } }).result;
+  assert.equal(batch.isError, false); assert.equal(batch.structuredContent?.publication_state, 'published'); assert.equal(batch.structuredContent?.replacements, 2);
+  assert.equal(batch.structuredContent?.previous_revision, edited.structuredContent?.revision);
+  assert.notEqual(batch.structuredContent?.revision, batch.structuredContent?.previous_revision);
+  assert.equal(readFileSync(textPath, 'utf8'), 'name=batch\r\n备注=更新😀\r\n');
+  const afterBatch = statSync(textPath);
+  assert.deepEqual([afterBatch.mode & 0o777, afterBatch.uid, afterBatch.gid], [0o640, metadata.uid, metadata.gid]);
   p.child.stdin.end(); await p.closed;
   const upload = async (overwrite: boolean) => {
     const connection = await connect(), result: TransferResult = { bytes_transferred: 0 };

@@ -82,7 +82,7 @@ Agent 认证设置 `SSH_MCP_SERVER_<ID>_AGENT_SOCKET`，并省略密码、私钥
 | `ssh_upload` | `server_id`、`local_path`、`remote_path`，可选 `overwrite`、`atomic`、`timeout_seconds` | 路径、字节数、时长；原子模式增加发布与清理状态 |
 | `ssh_download` | `server_id`、`local_path`、`remote_path`，可选 `overwrite`、`timeout_seconds` | 路径、字节数、时长 |
 | `ssh_read_file` | `server_id`、`remote_path`，可选 `start_line`、`line_count`、`timeout_seconds` | 文本页、行范围、`next_line`、文件大小与 `revision` |
-| `ssh_edit_file` | `server_id`、`remote_path`、`old_text`、`new_text`、`expected_revision`，可选 `timeout_seconds` | 替换数量、新旧版本、传输字节及原子发布状态 |
+| `ssh_edit_file` | `server_id`、`remote_path`、`expected_revision`，提供 `old_text`/`new_text` 或 `edits`，可选 `timeout_seconds` | 替换数量、新旧版本、传输字节及原子发布状态 |
 
 参数使用 snake_case，拒绝未知字段。`ssh_list` 不联网探测，不表示在线状态。远端调用总超时默认 180 秒，范围 1–3600 秒；每跳连接与认证握手另有 15 秒上限，并受总超时约束。目标跳的 15 秒包含转发通道建立与目标认证。每次远端调用使用独立连接或单跳连接链，结束、取消或会话关闭时释放整条链。
 
@@ -145,6 +145,22 @@ stdout 最多保存 96 KiB，stderr 最多保存 32 KiB，分别排空和统计�
 `ssh_read_file` 经 SFTP 读取单个普通 UTF-8 文件，拒绝目录、符号链接、无效编码和 NUL。文件最大 1 MiB，持续限制实际读取量。默认从第 1 行读取 200 行，`line_count` 范围 1–1000，每页正文最多 96 KiB，保留 CRLF 与末尾换行。页边界落在完整行之间；使用 `next_line` 继续，`null` 表示末尾。单行超过预算返回 `ssh_text_limit`。空文件为 0 行。
 
 读取返回整个文件内容的 SHA256 `revision`。`ssh_edit_file` 必须提供该值，以及非空 `old_text` 和不同的 `new_text`；新文本可以为空。旧文本须精确出现一次，重叠匹配也视为歧义，否则返回 `ssh_text_match`。内容版本不符返回 `ssh_text_conflict`，编辑前后文件均受 1 MiB 限制。
+
+同一文件多处修改可改传 `edits=[{old_text,new_text},...]`，与顶层 `old_text`/`new_text` 二选一。数组包含 1–100 项，新旧文本编码后合计最多 2 MiB，每项仍须满足上述文本要求。所有匹配均基于 `expected_revision` 对应的原始内容，互不重叠，允许相邻；前一项生成的新文本不会成为后一项的匹配来源。全部校验通过后一次原子发布，`replacements` 返回替换项数；任一项失败时不发布部分修改。
+
+例如同一原始版本中修改两个配置项：
+
+```json
+{
+  "server_id": "staging",
+  "remote_path": "/etc/example.conf",
+  "expected_revision": "<ssh_read_file 返回的 revision>",
+  "edits": [
+    { "old_text": "port=8080", "new_text": "port=8081" },
+    { "old_text": "workers=2", "new_text": "workers=4" }
+  ]
+}
+```
 
 编辑使用权限受限的本地临时目录暂存新内容，经已有原子上传路径发布，要求远端 POSIX rename 扩展，保留普通 POSIX 权限位与 uid/gid。发布前再次读取并核对内容版本，失败保留旧目标并报告发布及清理状态。版本检查与 rename 之间仍有外部写入窗口，不保证原子比较交换；需要严格互斥时，调用方须与远端写入者协调锁。符号链接、ACL 和扩展属性边界同原子上传。
 

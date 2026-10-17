@@ -40,7 +40,18 @@ const forgetInput = z.strictObject({ output_id: z.string().uuid() });
 const probeInput = z.strictObject(selection);
 const textInput = z.strictObject({ ...selection, remote_path: z.string().regex(/^\//), start_line: z.number().int().min(1).default(1), line_count: z.number().int().min(1).max(1000).default(200) });
 const textValue = z.string().refine(value => !value.includes('\0'), '文本不能包含 NUL').superRefine((value, context) => { if (Buffer.byteLength(value) > MAX_TEXT_BYTES) context.addIssue({ code: 'too_big', origin: 'string', maximum: MAX_TEXT_BYTES, inclusive: true, message: '文本编码后不能超过 1 MiB' }); });
-const editInput = z.strictObject({ ...selection, remote_path: z.string().regex(/^\//), old_text: textValue.refine(value => value.length > 0, 'old_text 不能为空'), new_text: textValue, expected_revision: z.string().regex(/^[a-f0-9]{64}$/).describe('ssh_read_file 返回的 revision；发布前再次核对，不能代替远端写入者之间的锁') }).refine(value => value.old_text !== value.new_text, '新旧文本不能相同');
+const oldText = textValue.refine(value => value.length > 0, 'old_text 不能为空');
+const editPair = z.strictObject({ old_text: oldText, new_text: textValue }).refine(value => value.old_text !== value.new_text, '新旧文本不能相同');
+const editInput = z.strictObject({
+  ...selection,
+  remote_path: z.string().regex(/^\//),
+  old_text: oldText.optional(),
+  new_text: textValue.optional(),
+  edits: z.array(editPair).min(1).max(100).superRefine((edits, context) => {
+    if (edits.reduce((bytes, edit) => bytes + Buffer.byteLength(edit.old_text) + Buffer.byteLength(edit.new_text), 0) > 2 * MAX_TEXT_BYTES) context.addIssue({ code: 'too_big', origin: 'string', maximum: 2 * MAX_TEXT_BYTES, inclusive: true, message: '批量新旧文本编码后合计不能超过 2 MiB' });
+  }).optional().describe('1–100 项，全部匹配同一原始版本且范围不重叠；新旧文本合计最多 2 MiB，与顶层 old_text/new_text 二选一'),
+  expected_revision: z.string().regex(/^[a-f0-9]{64}$/).describe('ssh_read_file 返回的 revision；发布前再次核对，不能代替远端写入者之间的锁'),
+}).refine(value => value.edits !== undefined ? value.old_text === undefined && value.new_text === undefined : value.old_text !== undefined && value.new_text !== undefined && value.old_text !== value.new_text, '须提供一组不同的 old_text/new_text 或 edits，不能混用');
 const textBase = { server_id: z.string(), remote_path: z.string(), duration_ms: z.number().int() };
 const transferInput = z.strictObject({ ...selection, local_path: z.string().min(1).describe('MCP 进程所在机器的绝对文件路径，父目录须存在'), remote_path: z.string().regex(/^\//).describe('远端 SFTP 绝对文件路径，不展开 ~ 或环境变量，父目录须存在'), overwrite: z.boolean().default(false) });
 const uploadInput = z.strictObject({ ...transferInput.shape, atomic: z.boolean().default(false).describe('写同目录临时文件后原子发布，须服务器支持对应 OpenSSH 扩展；不支持时失败') });
@@ -58,7 +69,7 @@ const definitions = [
   { name: 'ssh_upload', description: '通过 SFTP 上传单个普通文件，最大 128 MiB，默认禁止覆盖，不创建父目录。路径须为绝对路径，不展开 ~。atomic=true 使用同目录临时文件发布，保留普通权限及 uid/gid，不保留 ACL、扩展属性或硬链接关系；默认直接上传，失败可能遗留部分文件。', input: uploadInput, output: transferOutput },
   { name: 'ssh_download', description: '通过 SFTP 下载单个普通文件，最大 128 MiB，默认禁止覆盖，不创建父目录。local_path 使用本机绝对路径，remote_path 使用远端绝对路径，不展开 ~。下载先写同目录临时文件，完整完成后发布，失败保留原目标。', input: transferInput, output: transferOutput },
   { name: 'ssh_read_file', description: '通过 SFTP 按行读取最多 1 MiB 的 UTF-8 普通文本文件，不执行 Shell。默认前 200 行，每页最多 96 KiB，使用 next_line 继续；返回 revision 供编辑前提检查。拒绝符号链接、无效 UTF-8 和 NUL。', input: textInput, output: z.union([z.object({ ...textBase, content: z.string(), start_line: z.number().int(), end_line: z.number().int(), next_line: z.number().int().nullable(), total_lines: z.number().int(), revision: z.string(), file_bytes: z.number().int() }), z.object({ ...textBase, error: errorSchema })]) },
-  { name: 'ssh_edit_file', description: '按 expected_revision 核对远端 UTF-8 文件，将唯一匹配的 old_text 替换为 new_text，原子发布并保留普通权限及 uid/gid。最多 1 MiB，须 POSIX rename 扩展。发布前再次核对内容；不承诺与外部写入者间的原子比较交换。', input: editInput, output: z.object({ ...textBase, bytes_transferred: z.number().int(), publication_state: z.enum(['not_published', 'unknown', 'published']), temporary_path: z.string().optional(), cleanup_pending: z.boolean().optional(), previous_revision: z.string().optional(), revision: z.string().optional(), replacements: z.number().int().optional(), error: errorSchema.optional() }) },
+  { name: 'ssh_edit_file', description: '按 expected_revision 编辑远端 UTF-8 文件。提供 old_text/new_text 或 edits 数组；各项在原始版本中须唯一匹配且互不重叠，全部校验后一次原子发布，保留普通权限及 uid/gid。文件最多 1 MiB，须 POSIX rename 扩展。发布前复查版本，不承诺原子比较交换。', input: editInput, output: z.object({ ...textBase, bytes_transferred: z.number().int(), publication_state: z.enum(['not_published', 'unknown', 'published']), temporary_path: z.string().optional(), cleanup_pending: z.boolean().optional(), previous_revision: z.string().optional(), revision: z.string().optional(), replacements: z.number().int().optional(), error: errorSchema.optional() }) },
 ];
 const respond = (data: Record<string, unknown>, isError = false) => ({ isError, structuredContent: data, content: [{ type: 'text' as const, text: JSON.stringify(data) }] });
 
@@ -133,7 +144,7 @@ export function createServer(config: Config, version: string, root: AbortSignal)
         }
         else if ('command' in input) await exec(connection, input.command, execution, context, { ...input, onOutput: outputId ? (stream, data) => outputs.append(outputId!, stream, data) : undefined });
         else if (input.kind === 'read') { context.phase = 'read'; textResult = textLines(await readText(connection, input.remote_path), input.start_line, input.line_count); context.operation_state = 'completed'; }
-        else if (input.kind === 'edit') textResult = await editText(connection, input.remote_path, input.old_text, input.new_text, input.expected_revision, progress, context);
+        else if (input.kind === 'edit') textResult = await editText(connection, input.remote_path, input.edits ?? [{ old_text: input.old_text!, new_text: input.new_text! }], input.expected_revision, progress, context);
         else { context.phase = 'probe'; capabilities = { ssh: true, host_key_fingerprint: connection.hostKeyFingerprint }; capabilities = await probe(connection); context.operation_state = 'completed'; }
       } finally { connection.close(); }
     } catch (failure) {

@@ -79,14 +79,32 @@ export function textLines(text: Awaited<ReturnType<typeof readText>>, startLine:
   return { content, start_line: startLine, end_line: end, next_line: end < lines.length ? end + 1 : null, total_lines: lines.length, revision: text.revision, file_bytes: text.bytes };
 }
 
-export async function editText(connection: Connection, path: string, oldText: string, newText: string, expectedRevision: string, result: TransferResult, context: OperationContext) {
+export interface TextEdit { old_text: string; new_text: string }
+
+export function applyTextEdits(content: string, edits: TextEdit[]) {
+  const ranges = edits.map(edit => {
+    const start = content.indexOf(edit.old_text);
+    if (start === -1 || content.indexOf(edit.old_text, start + 1) !== -1) throw new SSHError('ssh_text_match', '每项 old_text 必须在原始文件中精确出现一次');
+    return { start, end: start + edit.old_text.length, text: edit.new_text };
+  }).sort((a, b) => a.start - b.start);
+  const parts: string[] = [];
+  let end = 0;
+  for (const range of ranges) {
+    if (range.start < end) throw new SSHError('ssh_text_match', '批量编辑的匹配范围不能重叠');
+    parts.push(content.slice(end, range.start), range.text);
+    end = range.end;
+  }
+  parts.push(content.slice(end));
+  const data = Buffer.from(parts.join(''));
+  if (data.length > MAX_TEXT_BYTES) throw new SSHError('ssh_text_limit', '编辑后的文本不能超过 1 MiB');
+  return data;
+}
+
+export async function editText(connection: Connection, path: string, edits: TextEdit[], expectedRevision: string, result: TransferResult, context: OperationContext) {
   context.phase = 'read';
   const previous = await readText(connection, path);
   if (previous.revision !== expectedRevision) throw new SSHError('ssh_text_conflict', '文件内容已变化，请重新读取后编辑');
-  const index = previous.content.indexOf(oldText);
-  if (index === -1 || previous.content.indexOf(oldText, index + 1) !== -1) throw new SSHError('ssh_text_match', 'old_text 必须在当前文件中精确出现一次');
-  const data = Buffer.from(previous.content.slice(0, index) + newText + previous.content.slice(index + oldText.length));
-  if (data.length > MAX_TEXT_BYTES) throw new SSHError('ssh_text_limit', '编辑后的文本不能超过 1 MiB');
+  const data = applyTextEdits(previous.content, edits);
   const directory = await mkdtemp(join(tmpdir(), 'ssh-mcp-edit-'));
   let failure: unknown;
   try {
@@ -102,5 +120,5 @@ export async function editText(connection: Connection, path: string, oldText: st
     catch { failure ??= new SSHError('ssh_text_cleanup', '本地编辑临时文件清理失败', { phase: 'cleanup', operation_state: context.operation_state }); }
   }
   if (failure) throw failure;
-  return { previous_revision: previous.revision, revision: revision(data), replacements: 1 };
+  return { previous_revision: previous.revision, revision: revision(data), replacements: edits.length };
 }
