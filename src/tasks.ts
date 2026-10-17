@@ -35,7 +35,7 @@ export class TaskStore {
     this.prune();
     if (this.root.aborted) throw new SSHError('ssh_canceled', 'MCP 会话已关闭', { operation_state: 'not_started' });
     if (!this.config.servers.has(input.server_id)) throw new SSHError('ssh_server_unknown', '未知 server_id，请使用 ssh_list 返回的精确 ID', { operation_state: 'not_started' });
-    if (this.entries.size >= MAX_SAVED_OUTPUTS) throw new SSHError('ssh_task_limit', '会话已保留 8 个任务，请等待已结束任务过期', { operation_state: 'not_started' });
+    if (this.entries.size >= MAX_SAVED_OUTPUTS) throw new SSHError('ssh_task_limit', '会话已保留 8 个任务，请用 ssh_task_list 查询并以关联 output_id 调用 ssh_output_forget 释放已结束任务；活动任务须先取消或等待完成', { operation_state: 'not_started' });
     const outputId = this.outputs.create();
     const task: Task = { id: randomUUID(), serverId: input.server_id, outputId, status: 'queued', context: { phase: 'queue', operation_state: 'not_started' }, controller: new AbortController(), startedAt: new Date(this.now()).toISOString(), cancelRequested: false, changes: new EventTarget() };
     this.entries.set(task.id, task);
@@ -45,7 +45,7 @@ export class TaskStore {
   get(id: string) { return this.snapshot(this.find(id)); }
   list() {
     this.prune();
-    return { tasks: [...this.entries.values()].map(task => { const { result: _, ...summary } = this.snapshot(task); return summary; }) };
+    return { tasks: [...this.entries.values()].map(task => { const { result: _, ...summary } = this.snapshot(task); return summary; }), output_capacity: this.outputs.capacity() };
   }
   async wait(id: string, seconds: number, signal: AbortSignal) {
     const task = this.find(id);

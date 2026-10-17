@@ -17,7 +17,7 @@ export class OutputStore {
   constructor(private now = () => Date.now()) {}
   create() {
     this.prune();
-    if (this.entries.size >= MAX_SAVED_OUTPUTS) throw new SSHError('ssh_output_limit', '会话已保存 8 份输出，请等待输出过期后再启动保存操作', { operation_state: 'not_started' });
+    if (this.entries.size >= MAX_SAVED_OUTPUTS) throw new SSHError('ssh_output_limit', '会话已保存 8 份输出，请用 ssh_output_forget 释放已结束输出；活动操作须先取消或等待完成，也可等待完成后 10 分钟过期', { operation_state: 'not_started' });
     const stream = (): SavedStream => ({ data: Buffer.alloc(SAVED_STREAM_BYTES), used: 0, total: 0 });
     const id = randomUUID();
     this.entries.set(id, { streams: { stdout: stream(), stderr: stream() }, changes: new EventTarget() });
@@ -47,21 +47,31 @@ export class OutputStore {
     entry.changes.dispatchEvent(new Event('change'));
     return { output_id: id, forgotten: true };
   }
-  read(id: string, stream: OutputStream, offset: number, maxBytes: number) {
+  capacity() {
+    this.prune();
+    const active = [...this.entries.values()].filter(entry => entry.expires === undefined).length;
+    return { used: this.entries.size, limit: MAX_SAVED_OUTPUTS, available: MAX_SAVED_OUTPUTS - this.entries.size, active, releasable: this.entries.size - active };
+  }
+  read(id: string, stream: OutputStream, offset: number, maxBytes: number, tail = false) {
     this.prune();
     const entry = this.entries.get(id);
     if (!entry) throw new SSHError('ssh_output_unknown', '输出 ID 不存在、已过期或属于其他 MCP 会话', { operation_state: 'not_started' });
     const saved = entry.streams[stream];
+    if (tail) offset = Math.max(0, saved.used - maxBytes);
     if (offset > saved.used) throw new SSHError('ssh_input_invalid', 'offset 超过当前可读取字节数', { operation_state: 'not_started' });
     const page = textPage(saved.data.subarray(0, saved.used), offset, maxBytes, entry.expires !== undefined);
     return { output_id: id, stream, ...page, available_bytes: saved.used, total_bytes: saved.total, storage_truncated: saved.total > saved.used, finished: entry.expires !== undefined, eof: entry.expires !== undefined && page.next_offset === saved.used };
   }
-  async readWait(id: string, stream: OutputStream, offset: number, maxBytes: number, seconds: number, signal: AbortSignal) {
-    this.read(id, stream, offset, maxBytes);
+  async readWait(id: string, stream: OutputStream, offset: number, maxBytes: number, seconds: number, signal: AbortSignal, tail = false) {
+    this.read(id, stream, offset, maxBytes, tail);
     const entry = this.entries.get(id)!;
     const saved = entry.streams[stream];
-    await waitUntil(() => !this.entries.has(id) || entry.expires !== undefined || saved.used === SAVED_STREAM_BYTES || textPage(saved.data.subarray(0, saved.used), offset, maxBytes, false).next_offset > offset, entry.changes, seconds, signal);
-    return this.read(id, stream, offset, maxBytes);
+    await waitUntil(() => {
+      if (!this.entries.has(id) || entry.expires !== undefined || saved.used === SAVED_STREAM_BYTES) return true;
+      const start = tail ? Math.max(0, saved.used - maxBytes) : offset;
+      return textPage(saved.data.subarray(0, saved.used), start, maxBytes, false).next_offset > start;
+    }, entry.changes, seconds, signal);
+    return this.read(id, stream, offset, maxBytes, tail);
   }
   clear() {
     const entries = [...this.entries.values()];

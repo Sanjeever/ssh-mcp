@@ -37,6 +37,11 @@ test('异步命令及时返回，运行中读取输出，结果保留退出失�
   assert.equal((await call('ssh_task_cancel', { task_id: task.task_id })).status, 'canceled');
   assert.equal((await call('ssh_output_forget', { output_id: task.output_id })).forgotten, true);
   assert.deepEqual((await call('ssh_task_list', {})).tasks, []);
+  const sync = await call('ssh_exec', { server_id: 'test', command: 'ok', save_output: true });
+  const shared = await call('ssh_task_list', {});
+  assert.deepEqual(shared.tasks, []);
+  assert.deepEqual(shared.output_capacity, { used: 1, limit: 8, available: 7, active: 0, releasable: 1 });
+  await call('ssh_output_forget', { output_id: sync.output_id });
   const forgotten = await p.request('tools/call', { name: 'ssh_task_status', arguments: { task_id: task.task_id } }).result;
   assert.equal((forgotten.structuredContent?.error as { code: string }).code, 'ssh_task_unknown');
   for (const command of ['ok', 'fail', 'missing']) {
@@ -95,4 +100,20 @@ test('MCP EOF 关闭已返回句柄的异步命令连接', async t => {
   p.child.stdin.end(); assert.equal((await p.closed)[0], 0);
   for (let attempt = 0; s.clients.size && attempt < 100; attempt++) await delay(10);
   assert.equal(s.clients.size, 0);
+});
+
+test('任务容量满时提示查询与释放，释放已结束任务后可立即启动', async t => {
+  const s = await startSSH(t, { session: execSession });
+  const root = new AbortController(), outputs = new OutputStore(); t.after(() => root.abort());
+  const config = { servers: new Map([[s.config.id, s.config]]), knownHosts: join(s.root, 'known_hosts'), hostKeyPolicy: 'accept_new' as const };
+  const tasks = new TaskStore(config, outputs, root.signal);
+  const started = Array.from({ length: 8 }, () => tasks.start({ server_id: 'test', command: 'ok', timeout_seconds: 5 }));
+  await Promise.all(started.map(task => tasks.wait(task.task_id, 5, root.signal)));
+  assert.deepEqual(tasks.list().output_capacity, { used: 8, limit: 8, available: 0, active: 0, releasable: 8 });
+  assert.throws(() => tasks.start({ server_id: 'test', command: 'ok', timeout_seconds: 5 }), error => error instanceof Error && /ssh_task_list.*ssh_output_forget/.test(error.message) && 'code' in error && error.code === 'ssh_task_limit');
+  const removed = started[0]!;
+  outputs.forget(removed.output_id); tasks.forgetOutput(removed.output_id);
+  assert.equal(tasks.list().output_capacity.available, 1);
+  const next = tasks.start({ server_id: 'test', command: 'ok', timeout_seconds: 5 });
+  assert.equal((await tasks.wait(next.task_id, 5, root.signal)).status, 'completed');
 });

@@ -75,9 +75,9 @@ Agent 认证设置 `SSH_MCP_SERVER_<ID>_AGENT_SOCKET`，并省略密码、私钥
 | `ssh_exec` | `server_id`、`command`，可选 `stdin`、`output_mode`、`stdout_max_bytes`、`stderr_max_bytes`、`save_output`、`timeout_seconds` | `server_id`、`stdout`、`stderr`、退出状态、时长与输出统计；保存时含 `output_id` |
 | `ssh_exec_start` | 同 `ssh_exec`，省略 `save_output`，始终保存输出 | `task_id`、`output_id`、任务状态与当前操作阶段 |
 | `ssh_task_status` | `task_id`，可选 `wait_seconds` | 当前状态，结束后包含 `result` 命令结果 |
-| `ssh_task_list` | 无 | 当前会话任务摘要，包含句柄、服务器、状态与可用的过期时间 |
+| `ssh_task_list` | 无 | 当前会话任务摘要与共享输出容量，包含句柄、服务器、状态与可用的过期时间 |
 | `ssh_task_cancel` | `task_id` | 取消请求状态与当前任务快照 |
-| `ssh_output` | `output_id`，可选 `stream`、`offset`、`max_bytes`、`wait_seconds` | 输出页、`next_offset`、可读取量与实际接收量、保存截断和完成状态 |
+| `ssh_output` | `output_id`，可选 `stream`、`offset`、`tail`、`max_bytes`、`wait_seconds` | 输出页、`next_offset`、可读取量与实际接收量、保存截断和完成状态 |
 | `ssh_output_forget` | `output_id` | 释放已结束操作的保存输出和关联任务记录，归还容量 |
 | `ssh_upload` | `server_id`、`local_path`、`remote_path`，可选 `overwrite`、`atomic`、`timeout_seconds` | 路径、字节数、时长；原子模式增加发布与清理状态 |
 | `ssh_download` | `server_id`、`local_path`、`remote_path`，可选 `overwrite`、`timeout_seconds` | 路径、字节数、时长 |
@@ -102,7 +102,11 @@ stdout 最多保存 96 KiB，stderr 最多保存 32 KiB，分别排空和统计�
 
 `save_output=true` 显式在当前 MCP 会话内存中保存输出，并返回 `output_id`。每流保留前 4 MiB，会话最多 8 份，总缓冲区上限 64 MiB。容量耗尽时在执行前返回 `ssh_output_limit`，不自动淘汰已有输出。保存内容在操作完成后 10 分钟过期，读取不会续期；会话关闭时释放。不写本地日志文件，不跨进程恢复。
 
+容量满时可用 `ssh_output_forget` 立即释放已结束输出；活动操作须先取消或等待完成。`ssh_task_list` 的 `output_capacity` 报告同步保存与异步任务共享的份数：`used`、`limit`、`available`、`active`（含排队的未结束操作）和 `releasable`（已结束可释放）。这些字段按输出记录计数，不表示字节数或额外任务配额。
+
 用 `ssh_output` 指定 `output_id`、`stream=stdout|stderr`，从默认 `offset=0` 开始读取，后续沿返回的 `next_offset` 继续。`max_bytes` 默认 16 KiB，范围 256 字节至 96 KiB。偏移按原始字节计算，合法 UTF-8 字符不会在页边界拆开；任意偏移落入续字节时跳到下一个字符。`available_bytes` 为已保存量，`total_bytes` 为实际接收量，`storage_truncated` 表示保存上限导致丢弃。`finished` 表示操作已结束，`eof` 表示保存内容已读完；保存截断时 EOF 不代表完整远端输出。失败调用也可读取已有输出。未知、过期或其他会话的 ID 返回 `ssh_output_unknown`。
+
+设置 `tail=true` 可直接读取已保存内容末尾最多 `max_bytes` 字节，不必计算起始偏移；与显式 `offset` 互斥。返回的 `offset` 和 `next_offset` 仍是保存区原始字节位置，UTF-8 边界行为相同。后续需要增量读取时，去掉 `tail`，使用 `next_offset`。保存截断时，读取的是前 4 MiB 保存区的末尾，无法取得上限以外的远端输出。
 
 `ssh_output` 的 `wait_seconds` 默认 0，范围 0–30 秒。当前偏移没有可读取的新内容时，可等待完整 UTF-8 字符、操作结束或等待到期；保存区已满时立即返回。其他流的新输出不会结束本流等待。等待到期返回当前页，不作为操作超时；取消等待不会取消原命令。
 
@@ -118,7 +122,7 @@ stdout 最多保存 96 KiB，stderr 最多保存 32 KiB，分别排空和统计�
 
 `ssh_task_status` 可传 `wait_seconds`，默认 0，范围 0–30 秒，等待任务结束或等待到期后返回当前快照。等待不会延长任务总超时，取消查询也不会取消任务。会话关闭会中断等待并按原生命周期清理任务。
 
-`ssh_task_list` 列出当前会话尚未过期的排队、运行及已结束任务，按启动顺序返回句柄、服务器、状态与开始时间；已结束任务额外包含 `expires_at`。列表不含命令、stdin、输出正文和完整结果，不连接远端。释放关联输出后，任务从列表移除。
+`ssh_task_list` 列出当前会话尚未过期的排队、运行及已结束任务，按启动顺序返回句柄、服务器、状态与开始时间；已结束任务额外包含 `expires_at`。列表不含命令、stdin、输出正文和完整结果，不连接远端。释放关联输出后，任务从列表移除。任务容量满时，错误提示通过列表找到关联 `output_id` 并释放已结束记录；共享输出容量见上述 `output_capacity`。
 
 `ssh_task_cancel` 发送本地取消请求，重复调用保持幂等。`cancel_requested=true` 表示已请求取消，继续查询取得最终状态；已结束任务不再取消。`canceled` 表示本地调用已取消并清理连接，不能据此确认远端进程停止。启动请求完成后，任务由显式取消、总超时和 MCP 会话生命周期管理；会话 EOF、终止信号或进程退出都会结束连接，不跨进程恢复，不自动重试。
 

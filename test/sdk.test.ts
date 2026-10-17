@@ -41,7 +41,8 @@ test('官方 SDK 客户端校验工具成功与失败输出 Schema', async t => 
   assert.equal(snapshot.status, 'completed');
   const listed = await client.callTool({ name: 'ssh_task_list', arguments: {} });
   assert.equal(z.object({ tasks: z.array(taskSchema) }).parse(listed.structuredContent).tasks[0]?.task_id, task.task_id);
-  const saved = await client.callTool({ name: 'ssh_output', arguments: { output_id: task.output_id } });
+  assert.equal(z.object({ output_capacity: z.object({ releasable: z.number() }) }).parse(listed.structuredContent).output_capacity.releasable, 1);
+  const saved = await client.callTool({ name: 'ssh_output', arguments: { output_id: task.output_id, tail: true, wait_seconds: 5 } });
   assert.equal(z.object({ text: z.string() }).parse(saved.structuredContent).text, 'remote ok\n');
   const canceled = await client.callTool({ name: 'ssh_task_cancel', arguments: { task_id: task.task_id } });
   assert.equal(taskSchema.parse(canceled.structuredContent).status, 'completed');

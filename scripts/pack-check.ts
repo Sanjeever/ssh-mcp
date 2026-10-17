@@ -56,7 +56,7 @@ export async function checkPack(tarball?: string) {
         { request: { name: 'ssh_probe', arguments: { server_id: 'smoke' } } },
         { request: { name: 'ssh_read_file', arguments: { server_id: 'smoke', remote_path: remote } } },
         { request: results => ({ name: 'ssh_edit_file', arguments: { server_id: 'smoke', remote_path: remote, edits: [{ old_text: '隔离安装', new_text: '包内验证' }, { old_text: '往返', new_text: '修改' }], expected_revision: results[5]?.structuredContent?.revision } }), error_code: 'ssh_transfer_failed' },
-        { request: results => ({ name: 'ssh_output', arguments: { output_id: results[0]?.structuredContent?.output_id } }) },
+        { request: results => ({ name: 'ssh_output', arguments: { output_id: results[0]?.structuredContent?.output_id, tail: true, wait_seconds: 1 } }) },
         { request: { name: 'ssh_exec_start', arguments: { server_id: 'smoke', command: 'hang' } } },
         { request: results => ({ name: 'ssh_task_status', arguments: { task_id: results[8]?.structuredContent?.task_id } }) },
         { request: results => ({ name: 'ssh_task_cancel', arguments: { task_id: results[8]?.structuredContent?.task_id } }) },
