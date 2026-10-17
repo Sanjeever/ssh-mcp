@@ -66,6 +66,7 @@ export async function smoke(command: string, args: string[], env: NodeJS.Process
           else if (call.name === 'ssh_read_file') assert.equal(response.structuredContent?.content, '隔离安装 SFTP 往返');
           else if (call.name === 'ssh_output') assert.equal(response.structuredContent?.text, 'remote ok\n');
           else if (call.name === 'ssh_output_forget') assert.equal(response.structuredContent?.forgotten, true);
+          else if (call.name === 'ssh_task_list') assert(Array.isArray(response.structuredContent?.tasks));
           else { assert.equal(typeof response.structuredContent?.task_id, 'string'); if (call.name === 'ssh_task_cancel') assert.equal(response.structuredContent?.cancel_requested, true); }
         }
         resolve(InitializeResultSchema.parse(responses.get(1)).serverInfo.version);

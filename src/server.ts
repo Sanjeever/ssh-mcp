@@ -32,8 +32,10 @@ const validationOutput = z.object({ error: errorSchema });
 const execOutput = z.object({ server_id: z.string(), stdout: z.string(), stderr: z.string(), exit_code: z.number().int().nullable(), exit_signal: z.string().nullable(), duration_ms: z.number().int(), output_truncated: z.boolean(), stdout_truncated: z.boolean(), stderr_truncated: z.boolean(), stdout_bytes: z.number().int(), stderr_bytes: z.number().int(), stdout_omitted_bytes: z.number().int(), stderr_omitted_bytes: z.number().int(), output_id: z.string().optional(), error: errorSchema.optional() });
 const startInput = execInput.omit({ save_output: true });
 const taskInput = z.strictObject({ task_id: z.string().uuid() });
-const taskOutput = z.object({ task_id: z.string(), server_id: z.string(), output_id: z.string(), status: z.enum(['queued', 'running', 'completed', 'failed', 'canceled']), phase: z.string(), operation_state: z.enum(['not_started', 'may_have_started', 'completed']), started_at: z.string(), cancel_requested: z.boolean(), result: execOutput.optional() });
-const outputInput = z.strictObject({ output_id: z.string().uuid(), stream: z.enum(['stdout', 'stderr']).default('stdout'), offset: z.number().int().min(0).default(0), max_bytes: z.number().int().min(256).max(96 * 1024).default(16 * 1024) });
+const waitSeconds = z.number().int().min(0).max(30).default(0).describe('最多等待秒数，0 立即返回；取消等待不会取消原操作');
+const statusInput = taskInput.extend({ wait_seconds: waitSeconds });
+const taskOutput = z.object({ task_id: z.string(), server_id: z.string(), output_id: z.string(), status: z.enum(['queued', 'running', 'completed', 'failed', 'canceled']), phase: z.string(), operation_state: z.enum(['not_started', 'may_have_started', 'completed']), started_at: z.string(), cancel_requested: z.boolean(), expires_at: z.string().optional(), result: execOutput.optional() });
+const outputInput = z.strictObject({ output_id: z.string().uuid(), stream: z.enum(['stdout', 'stderr']).default('stdout'), offset: z.number().int().min(0).default(0), max_bytes: z.number().int().min(256).max(96 * 1024).default(16 * 1024), wait_seconds: waitSeconds });
 const forgetInput = z.strictObject({ output_id: z.string().uuid() });
 const probeInput = z.strictObject(selection);
 const textInput = z.strictObject({ ...selection, remote_path: z.string().regex(/^\//), start_line: z.number().int().min(1).default(1), line_count: z.number().int().min(1).max(1000).default(200) });
@@ -48,9 +50,10 @@ const definitions = [
   { name: 'ssh_probe', description: '显式连接所选服务器，验证主机信任、认证及 SFTP 能力，返回主机密钥指纹和原子发布扩展支持。不开 Shell、不写远端文件；accept_new 仍可能追加本机 known_hosts。', input: probeInput, output: z.object({ server_id: z.string(), duration_ms: z.number().int(), ssh: z.boolean(), host_key_fingerprint: z.string().optional(), sftp: z.object({ available: z.boolean(), atomic_overwrite: z.boolean().optional(), atomic_no_overwrite: z.boolean().optional(), reason: z.string().optional() }).optional(), error: errorSchema.optional() }) },
   { name: 'ssh_exec', description: '通过独立 SSH exec 执行远端命令，可提供最多 1 MiB UTF-8 stdin，无 PTY、无持续 Shell、不自动输入 sudo 密码。stdout 最多 96 KiB、stderr 最多 32 KiB，可降低预算，默认保留两端，超限继续排空。save_output=true 可分页读取保存的输出。超时或取消后远端状态可能不确定，不自动重试。', input: execInput, output: execOutput },
   { name: 'ssh_exec_start', description: '在当前 MCP 会话内异步启动一次独立命令，立即返回 task_id 和 output_id。使用 ssh_task_status 查询、ssh_output 读取增量输出、ssh_task_cancel 请求取消。总超时从启动计时；会话关闭时清理，不跨进程恢复，不使用持续 Shell。', input: startInput, output: taskOutput },
-  { name: 'ssh_task_status', description: '查询当前 MCP 会话的任务状态，结束后含命令结果。任务与保存输出在完成后保留 10 分钟。查询不重试命令、不连接远端。', input: taskInput, output: taskOutput },
+  { name: 'ssh_task_status', description: '查询当前 MCP 会话的任务状态，结束后含命令结果。wait_seconds 可等待任务结束，最长 30 秒，默认立即返回。任务与输出完成后保留 10 分钟；取消等待不取消任务，不连接远端。', input: statusInput, output: taskOutput },
+  { name: 'ssh_task_list', description: '列出当前 MCP 会话尚未过期的任务摘要，含 task_id、output_id、服务器、状态与可用的过期时间，不返回命令和输出正文，不连接远端。', input: z.strictObject({}), output: z.object({ tasks: z.array(taskOutput.omit({ result: true })) }) },
   { name: 'ssh_task_cancel', description: '请求取消当前 MCP 会话中的任务并关闭其连接，重复取消不重复执行命令。cancel_requested 不代表远端进程确认停止；继续查询取得本地最终状态。', input: taskInput, output: taskOutput },
-  { name: 'ssh_output', description: '按字节偏移读取当前 MCP 会话显式保存的命令输出，不连接远端、不重复执行命令。使用 next_offset 继续读取，保存上限与实际接收量分别报告。', input: outputInput, output: z.object({ output_id: z.string(), stream: z.enum(['stdout', 'stderr']), offset: z.number().int(), next_offset: z.number().int(), text: z.string(), available_bytes: z.number().int(), total_bytes: z.number().int(), storage_truncated: z.boolean(), finished: z.boolean(), eof: z.boolean() }) },
+  { name: 'ssh_output', description: '按字节偏移读取当前 MCP 会话保存的命令输出，使用 next_offset 继续。wait_seconds 可等待可读取的新输出或操作结束，最长 30 秒，默认立即返回。不连接远端、不重复执行命令；保存上限与实际接收量分别报告。', input: outputInput, output: z.object({ output_id: z.string(), stream: z.enum(['stdout', 'stderr']), offset: z.number().int(), next_offset: z.number().int(), text: z.string(), available_bytes: z.number().int(), total_bytes: z.number().int(), storage_truncated: z.boolean(), finished: z.boolean(), eof: z.boolean() }) },
   { name: 'ssh_output_forget', description: '释放已结束操作的保存输出及关联任务记录，立即归还会话容量。活动操作须先取消或等待完成；释放后不能再读取结果。不连接远端、不删除远端文件。', input: forgetInput, output: z.object({ output_id: z.string(), forgotten: z.boolean() }) },
   { name: 'ssh_upload', description: '通过 SFTP 上传单个普通文件，最大 128 MiB，默认禁止覆盖，不创建父目录。路径须为绝对路径，不展开 ~。atomic=true 使用同目录临时文件发布，保留普通权限及 uid/gid，不保留 ACL、扩展属性或硬链接关系；默认直接上传，失败可能遗留部分文件。', input: uploadInput, output: transferOutput },
   { name: 'ssh_download', description: '通过 SFTP 下载单个普通文件，最大 128 MiB，默认禁止覆盖，不创建父目录。local_path 使用本机绝对路径，remote_path 使用远端绝对路径，不展开 ~。下载先写同目录临时文件，完整完成后发布，失败保留原目标。', input: transferInput, output: transferOutput },
@@ -65,7 +68,7 @@ export function createServer(config: Config, version: string, root: AbortSignal)
   const tasks = new TaskStore(config, outputs, root, scheduler);
   root.addEventListener('abort', () => outputs.clear(), { once: true });
   const server = new Server({ name: 'ssh-mcp', version }, { capabilities: { tools: {} } });
-  server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: definitions.map(d => ({ name: d.name, description: d.description, annotations: { readOnlyHint: ['ssh_list', 'ssh_output', 'ssh_read_file', 'ssh_probe', 'ssh_task_status'].includes(d.name), destructiveHint: !['ssh_list', 'ssh_output', 'ssh_read_file', 'ssh_probe', 'ssh_task_status'].includes(d.name), idempotentHint: ['ssh_list', 'ssh_output', 'ssh_output_forget', 'ssh_read_file', 'ssh_probe', 'ssh_task_status', 'ssh_task_cancel'].includes(d.name), openWorldHint: !['ssh_list', 'ssh_output', 'ssh_output_forget', 'ssh_task_status'].includes(d.name) }, inputSchema: z.toJSONSchema(d.input, { io: 'input' }), outputSchema: { type: 'object' as const, anyOf: [z.toJSONSchema(d.output), z.toJSONSchema(validationOutput)] } })) }));
+  server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: definitions.map(d => ({ name: d.name, description: d.description, annotations: { readOnlyHint: ['ssh_list', 'ssh_output', 'ssh_read_file', 'ssh_probe', 'ssh_task_status', 'ssh_task_list'].includes(d.name), destructiveHint: !['ssh_list', 'ssh_output', 'ssh_read_file', 'ssh_probe', 'ssh_task_status', 'ssh_task_list'].includes(d.name), idempotentHint: ['ssh_list', 'ssh_output', 'ssh_output_forget', 'ssh_read_file', 'ssh_probe', 'ssh_task_status', 'ssh_task_list', 'ssh_task_cancel'].includes(d.name), openWorldHint: !['ssh_list', 'ssh_output', 'ssh_output_forget', 'ssh_task_status', 'ssh_task_list'].includes(d.name) }, inputSchema: z.toJSONSchema(d.input, { io: 'input' }), outputSchema: { type: 'object' as const, anyOf: [z.toJSONSchema(d.output), z.toJSONSchema(validationOutput)] } })) }));
   server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
     const definition = definitions.find(d => d.name === request.params.name);
     if (!definition) throw new McpError(ErrorCode.InvalidParams, '未知工具，请使用 tools/list 返回的工具名称');
@@ -74,7 +77,7 @@ export function createServer(config: Config, version: string, root: AbortSignal)
     if (request.params.name === 'ssh_list') return respond({ servers: [...config.servers.values()].map(s => ({ server_id: s.id, description: s.description, host: s.host, port: s.port, username: s.username, auth_type: s.agentSocket ? 'agent' : s.privateKeyPath ? 'private_key' : 'password', ...(s.jumpServerId ? { jump_server_id: s.jumpServerId } : {}) })) });
     if (request.params.name === 'ssh_output') {
       const input = outputInput.parse(request.params.arguments);
-      try { return respond(outputs.read(input.output_id, input.stream, input.offset, input.max_bytes)); }
+      try { return respond(await outputs.readWait(input.output_id, input.stream, input.offset, input.max_bytes, input.wait_seconds, AbortSignal.any([root, extra.signal]))); }
       catch (error) { if (error instanceof SSHError) return respond({ error: { code: error.code, message: error.message, ...error.details } }, true); throw error; }
     }
     if (request.params.name === 'ssh_output_forget') {
@@ -82,12 +85,17 @@ export function createServer(config: Config, version: string, root: AbortSignal)
       try { const result = outputs.forget(input.output_id); tasks.forgetOutput(input.output_id); return respond(result); }
       catch (error) { if (error instanceof SSHError) return respond({ error: { code: error.code, message: error.message, ...error.details } }, true); throw error; }
     }
-    if (['ssh_exec_start', 'ssh_task_status', 'ssh_task_cancel'].includes(request.params.name)) {
+    if (['ssh_exec_start', 'ssh_task_status', 'ssh_task_list', 'ssh_task_cancel'].includes(request.params.name)) {
       try {
         if (extra.signal.aborted) throw interrupted(extra.signal);
         if (request.params.name === 'ssh_exec_start') return respond(tasks.start(startInput.parse(request.params.arguments)));
+        if (request.params.name === 'ssh_task_list') return respond(tasks.list());
+        if (request.params.name === 'ssh_task_status') {
+          const input = statusInput.parse(request.params.arguments);
+          return respond(await tasks.wait(input.task_id, input.wait_seconds, AbortSignal.any([root, extra.signal])));
+        }
         const input = taskInput.parse(request.params.arguments);
-        return respond(request.params.name === 'ssh_task_cancel' ? tasks.cancel(input.task_id) : tasks.get(input.task_id));
+        return respond(tasks.cancel(input.task_id));
       } catch (error) { if (error instanceof SSHError) return respond({ error: { code: error.code, message: error.message, ...error.details } }, true); throw error; }
     }
     const input = request.params.name === 'ssh_probe' ? { kind: 'probe' as const, ...probeInput.parse(request.params.arguments) } : request.params.name === 'ssh_upload' ? { kind: 'upload' as const, ...uploadInput.parse(request.params.arguments) } : request.params.name === 'ssh_download' ? { kind: 'download' as const, ...transferInput.parse(request.params.arguments) } : request.params.name === 'ssh_read_file' ? { kind: 'read' as const, ...textInput.parse(request.params.arguments) } : request.params.name === 'ssh_edit_file' ? { kind: 'edit' as const, ...editInput.parse(request.params.arguments) } : { kind: 'exec' as const, ...execInput.parse(request.params.arguments) };

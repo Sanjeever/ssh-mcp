@@ -74,9 +74,10 @@ Agent 认证设置 `SSH_MCP_SERVER_<ID>_AGENT_SOCKET`，并省略密码、私钥
 | `ssh_probe` | `server_id`，可选 `timeout_seconds` | SSH 认证结果、已验证主机密钥指纹、SFTP 可用性和原子发布扩展 |
 | `ssh_exec` | `server_id`、`command`，可选 `stdin`、`output_mode`、`stdout_max_bytes`、`stderr_max_bytes`、`save_output`、`timeout_seconds` | `server_id`、`stdout`、`stderr`、退出状态、时长与输出统计；保存时含 `output_id` |
 | `ssh_exec_start` | 同 `ssh_exec`，省略 `save_output`，始终保存输出 | `task_id`、`output_id`、任务状态与当前操作阶段 |
-| `ssh_task_status` | `task_id` | 当前状态，结束后包含 `result` 命令结果 |
+| `ssh_task_status` | `task_id`，可选 `wait_seconds` | 当前状态，结束后包含 `result` 命令结果 |
+| `ssh_task_list` | 无 | 当前会话任务摘要，包含句柄、服务器、状态与可用的过期时间 |
 | `ssh_task_cancel` | `task_id` | 取消请求状态与当前任务快照 |
-| `ssh_output` | `output_id`，可选 `stream`、`offset`、`max_bytes` | 输出页、`next_offset`、可读取量与实际接收量、保存截断和完成状态 |
+| `ssh_output` | `output_id`，可选 `stream`、`offset`、`max_bytes`、`wait_seconds` | 输出页、`next_offset`、可读取量与实际接收量、保存截断和完成状态 |
 | `ssh_output_forget` | `output_id` | 释放已结束操作的保存输出和关联任务记录，归还容量 |
 | `ssh_upload` | `server_id`、`local_path`、`remote_path`，可选 `overwrite`、`atomic`、`timeout_seconds` | 路径、字节数、时长；原子模式增加发布与清理状态 |
 | `ssh_download` | `server_id`、`local_path`、`remote_path`，可选 `overwrite`、`timeout_seconds` | 路径、字节数、时长 |
@@ -103,6 +104,8 @@ stdout 最多保存 96 KiB，stderr 最多保存 32 KiB，分别排空和统计�
 
 用 `ssh_output` 指定 `output_id`、`stream=stdout|stderr`，从默认 `offset=0` 开始读取，后续沿返回的 `next_offset` 继续。`max_bytes` 默认 16 KiB，范围 256 字节至 96 KiB。偏移按原始字节计算，合法 UTF-8 字符不会在页边界拆开；任意偏移落入续字节时跳到下一个字符。`available_bytes` 为已保存量，`total_bytes` 为实际接收量，`storage_truncated` 表示保存上限导致丢弃。`finished` 表示操作已结束，`eof` 表示保存内容已读完；保存截断时 EOF 不代表完整远端输出。失败调用也可读取已有输出。未知、过期或其他会话的 ID 返回 `ssh_output_unknown`。
 
+`ssh_output` 的 `wait_seconds` 默认 0，范围 0–30 秒。当前偏移没有可读取的新内容时，可等待完整 UTF-8 字符、操作结束或等待到期；保存区已满时立即返回。其他流的新输出不会结束本流等待。等待到期返回当前页，不作为操作超时；取消等待不会取消原命令。
+
 非零退出码标记 MCP 工具错误并保留输出。信号结束或未收到数值退出状态时，`exit_code` 为 `null` 并返回错误，不由信号推导数值；收到具体信号时通过 `exit_signal` 返回，否则为 `null`。
 
 无需继续保留时，可调用 `ssh_output_forget` 立即释放输出和关联任务结果，归还保存容量；后续读取或查询返回未知 ID。活动操作返回 `ssh_output_active`，须先取消或等待完成。此操作不连接远端、不删除远端文件。
@@ -112,6 +115,10 @@ stdout 最多保存 96 KiB，stderr 最多保存 32 KiB，分别排空和统计�
 `ssh_exec_start` 在当前 MCP 会话启动一次独立命令，返回句柄后通过 `ssh_task_status` 查询。任务状态为 `queued`、`running`、`completed`、`failed` 或 `canceled`。启动接受成功不代表命令已成功执行；查询本身成功时，失败命令通过 `status=failed` 和 `result.error` 表达。总超时从启动计时，沿用同步命令的输入、输出预算和 SSH 边界。
 
 异步任务始终保存输出，与同步 `save_output` 共享 8 份输出容量。使用 `output_id` 调用 `ssh_output`，沿 `next_offset` 读取增量；运行期间读到当前末尾不表示任务结束，尚未到齐的 UTF-8 字符会等后续读取。任务结果和输出在结束后保留 10 分钟，查询不续期。未知、过期或其他会话任务返回 `ssh_task_unknown`。
+
+`ssh_task_status` 可传 `wait_seconds`，默认 0，范围 0–30 秒，等待任务结束或等待到期后返回当前快照。等待不会延长任务总超时，取消查询也不会取消任务。会话关闭会中断等待并按原生命周期清理任务。
+
+`ssh_task_list` 列出当前会话尚未过期的排队、运行及已结束任务，按启动顺序返回句柄、服务器、状态与开始时间；已结束任务额外包含 `expires_at`。列表不含命令、stdin、输出正文和完整结果，不连接远端。释放关联输出后，任务从列表移除。
 
 `ssh_task_cancel` 发送本地取消请求，重复调用保持幂等。`cancel_requested=true` 表示已请求取消，继续查询取得最终状态；已结束任务不再取消。`canceled` 表示本地调用已取消并清理连接，不能据此确认远端进程停止。启动请求完成后，任务由显式取消、总超时和 MCP 会话生命周期管理；会话 EOF、终止信号或进程退出都会结束连接，不跨进程恢复，不自动重试。
 

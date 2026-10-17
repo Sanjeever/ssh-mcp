@@ -5,6 +5,7 @@ import { OutputStore, SAVED_STREAM_BYTES, MAX_SAVED_OUTPUTS, OUTPUT_TTL_MS } fro
 import { startSSH } from './helpers/ssh-server.js';
 import { execSession } from './helpers/exec-session.js';
 import { startCLI } from './helpers/stdio.js';
+import { setTimeout as delay } from 'node:timers/promises';
 
 test('保存输出有容量、有效期和会话边界，分页不切断 UTF-8', () => {
   let now = 0;
@@ -50,6 +51,28 @@ test('显式释放完成输出归还容量，活动输出不能释放', () => {
   store.finish(id); assert.equal(store.forget(id).forgotten, true);
   assert.throws(() => store.read(id, 'stdout', 0, 256), { code: 'ssh_output_unknown' });
   store.create(); assert.throws(() => store.create(), { code: 'ssh_output_limit' });
+});
+
+test('输出等待在完整字符、完成、时限及取消时结束，清理后不保留等待', async () => {
+  const store = new OutputStore(), id = store.create(), signal = new AbortController().signal;
+  let settled = false;
+  const pending = store.readWait(id, 'stdout', 0, 256, 1, signal).then(page => { settled = true; return page; });
+  const character = Buffer.from('中');
+  store.append(id, 'stderr', Buffer.from('其他流'));
+  store.append(id, 'stdout', character.subarray(0, 2));
+  await delay(10); assert.equal(settled, false);
+  store.append(id, 'stdout', character.subarray(2));
+  assert.equal((await pending).text, '中');
+  const bounded = await store.readWait(id, 'stdout', 3, 256, 0.02, signal);
+  assert.equal(bounded.text, ''); assert.equal(bounded.finished, false);
+  const controller = new AbortController();
+  const canceled = store.readWait(id, 'stdout', 3, 256, 1, controller.signal);
+  controller.abort(); await assert.rejects(canceled, { code: 'ssh_canceled' });
+  assert.equal(store.read(id, 'stdout', 3, 256).finished, false);
+  const finished = store.readWait(id, 'stdout', 3, 256, 1, signal);
+  store.finish(id); assert.equal((await finished).eof, true);
+  const active = store.create(), cleared = store.readWait(active, 'stdout', 0, 256, 1, signal);
+  store.clear(); await assert.rejects(cleared, { code: 'ssh_output_unknown' });
 });
 
 test('真实 MCP 降低返回预算并分页取得被省略的输出，失败仍可读取', async t => {

@@ -7,6 +7,7 @@ import { dial } from './ssh/client.js';
 import { exec, createExecResult } from './ssh/exec.js';
 import type { ExecOptions } from './ssh/exec.js';
 import { OperationScheduler } from './scheduler.js';
+import { waitUntil } from './wait.js';
 
 type TaskStatus = 'queued' | 'running' | 'completed' | 'failed' | 'canceled';
 interface Task {
@@ -18,6 +19,7 @@ interface Task {
   controller: AbortController;
   startedAt: string;
   cancelRequested: boolean;
+  changes: EventTarget;
   expires?: number;
   result?: ReturnType<typeof createExecResult> & { server_id: string; output_id: string; duration_ms: number; error?: ReturnType<typeof operationError> };
 }
@@ -35,12 +37,21 @@ export class TaskStore {
     if (!this.config.servers.has(input.server_id)) throw new SSHError('ssh_server_unknown', '未知 server_id，请使用 ssh_list 返回的精确 ID', { operation_state: 'not_started' });
     if (this.entries.size >= MAX_SAVED_OUTPUTS) throw new SSHError('ssh_task_limit', '会话已保留 8 个任务，请等待已结束任务过期', { operation_state: 'not_started' });
     const outputId = this.outputs.create();
-    const task: Task = { id: randomUUID(), serverId: input.server_id, outputId, status: 'queued', context: { phase: 'queue', operation_state: 'not_started' }, controller: new AbortController(), startedAt: new Date(this.now()).toISOString(), cancelRequested: false };
+    const task: Task = { id: randomUUID(), serverId: input.server_id, outputId, status: 'queued', context: { phase: 'queue', operation_state: 'not_started' }, controller: new AbortController(), startedAt: new Date(this.now()).toISOString(), cancelRequested: false, changes: new EventTarget() };
     this.entries.set(task.id, task);
     void this.run(task, input);
     return this.snapshot(task);
   }
   get(id: string) { return this.snapshot(this.find(id)); }
+  list() {
+    this.prune();
+    return { tasks: [...this.entries.values()].map(task => { const { result: _, ...summary } = this.snapshot(task); return summary; }) };
+  }
+  async wait(id: string, seconds: number, signal: AbortSignal) {
+    const task = this.find(id);
+    await waitUntil(() => task.result !== undefined, task.changes, seconds, signal);
+    return this.get(id);
+  }
   forgetOutput(id: string) {
     for (const [taskId, task] of this.entries) if (task.outputId === id) this.entries.delete(taskId);
   }
@@ -56,7 +67,7 @@ export class TaskStore {
     return task;
   }
   private snapshot(task: Task) {
-    return { task_id: task.id, server_id: task.serverId, output_id: task.outputId, status: task.status, phase: task.context.phase, operation_state: task.context.operation_state, started_at: task.startedAt, cancel_requested: task.cancelRequested, ...(task.result ? { result: task.result } : {}) };
+    return { task_id: task.id, server_id: task.serverId, output_id: task.outputId, status: task.status, phase: task.context.phase, operation_state: task.context.operation_state, started_at: task.startedAt, cancel_requested: task.cancelRequested, ...(task.expires === undefined ? {} : { expires_at: new Date(task.expires).toISOString() }), ...(task.result ? { result: task.result } : {}) };
   }
   private prune() {
     for (const [id, task] of this.entries) if (task.expires !== undefined && task.expires <= this.now()) this.entries.delete(id);
@@ -79,5 +90,6 @@ export class TaskStore {
     task.result = { server_id: task.serverId, output_id: task.outputId, duration_ms: Math.floor(performance.now() - start), ...execution, ...(error ? { error } : {}) };
     task.status = error?.code === 'ssh_canceled' ? 'canceled' : error ? 'failed' : 'completed';
     task.expires = this.now() + OUTPUT_TTL_MS;
+    task.changes.dispatchEvent(new Event('change'));
   }
 }

@@ -61,6 +61,7 @@ export async function checkPack(tarball?: string) {
         { request: results => ({ name: 'ssh_task_status', arguments: { task_id: results[8]?.structuredContent?.task_id } }) },
         { request: results => ({ name: 'ssh_task_cancel', arguments: { task_id: results[8]?.structuredContent?.task_id } }) },
         { request: results => ({ name: 'ssh_output_forget', arguments: { output_id: results[0]?.structuredContent?.output_id } }) },
+        { request: { name: 'ssh_task_list', arguments: {} } },
       ];
       assert.equal(await smoke(process.execPath, [join(installed, 'dist/cli.js')], env, install, calls), pkg.version);
       assert.equal(readFileSync(target, 'utf8'), readFileSync(source, 'utf8'));

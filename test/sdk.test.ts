@@ -3,7 +3,6 @@ import assert from 'node:assert/strict';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { z } from 'zod';
-import { setTimeout as delay } from 'node:timers/promises';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { startSSH } from './helpers/ssh-server.js';
@@ -38,11 +37,10 @@ test('官方 SDK 客户端校验工具成功与失败输出 Schema', async t => 
   assert.equal(failureOutput.parse(edit.structuredContent).error.code, 'ssh_transfer_failed');
   const taskSchema = z.object({ task_id: z.string(), output_id: z.string(), status: z.string(), result: z.unknown().optional() });
   const task = taskSchema.parse((await client.callTool({ name: 'ssh_exec_start', arguments: { server_id: 'test', command: 'ok' } })).structuredContent);
-  let snapshot = task;
-  for (let attempt = 0; !snapshot.result && attempt < 100; attempt++) {
-    await delay(10); snapshot = taskSchema.parse((await client.callTool({ name: 'ssh_task_status', arguments: { task_id: task.task_id } })).structuredContent);
-  }
+  const snapshot = taskSchema.parse((await client.callTool({ name: 'ssh_task_status', arguments: { task_id: task.task_id, wait_seconds: 5 } })).structuredContent);
   assert.equal(snapshot.status, 'completed');
+  const listed = await client.callTool({ name: 'ssh_task_list', arguments: {} });
+  assert.equal(z.object({ tasks: z.array(taskSchema) }).parse(listed.structuredContent).tasks[0]?.task_id, task.task_id);
   const saved = await client.callTool({ name: 'ssh_output', arguments: { output_id: task.output_id } });
   assert.equal(z.object({ text: z.string() }).parse(saved.structuredContent).text, 'remote ok\n');
   const canceled = await client.callTool({ name: 'ssh_task_cancel', arguments: { task_id: task.task_id } });

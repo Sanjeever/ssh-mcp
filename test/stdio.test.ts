@@ -11,8 +11,8 @@ test('真实 stdio 初始化、列表、严格参数与 EOF', async t => {
   const tools = (await p.request('tools/list').result).tools;
   assert(tools.some(tool => tool.name === 'ssh_list' && tool.outputSchema));
   for (const tool of tools) {
-    assert.equal(tool.annotations?.readOnlyHint, ['ssh_list', 'ssh_output', 'ssh_read_file', 'ssh_probe', 'ssh_task_status'].includes(tool.name));
-    assert.equal(tool.annotations?.destructiveHint, !['ssh_list', 'ssh_output', 'ssh_read_file', 'ssh_probe', 'ssh_task_status'].includes(tool.name));
+    assert.equal(tool.annotations?.readOnlyHint, ['ssh_list', 'ssh_output', 'ssh_read_file', 'ssh_probe', 'ssh_task_status', 'ssh_task_list'].includes(tool.name));
+    assert.equal(tool.annotations?.destructiveHint, !['ssh_list', 'ssh_output', 'ssh_read_file', 'ssh_probe', 'ssh_task_status', 'ssh_task_list'].includes(tool.name));
   }
   const list = await p.request('tools/call', { name: 'ssh_list', arguments: {} }).result;
   assert.deepEqual(serversOutput.parse(list.structuredContent).servers.map(s => s.server_id), ['a', 'test']);
@@ -24,6 +24,11 @@ test('真实 stdio 初始化、列表、严格参数与 EOF', async t => {
   assert.match(JSON.stringify(bounds.structuredContent), /"path":\["timeout_seconds"\].*"minimum":1/);
   const tooLarge = await p.request('tools/call', { name: 'ssh_exec', arguments: { server_id: 'test', command: 'ok', stdin: '中'.repeat(350000) } }).result;
   assert.match(JSON.stringify(tooLarge.structuredContent), /"path":\["stdin"\].*"maximum":1048576/);
+  for (const name of ['ssh_task_status', 'ssh_output']) {
+    const args = { [name === 'ssh_task_status' ? 'task_id' : 'output_id']: '00000000-0000-4000-8000-000000000000', wait_seconds: 31 };
+    const invalidWait = await p.request('tools/call', { name, arguments: args }).result;
+    assert.match(JSON.stringify(invalidWait.structuredContent), /"path":\["wait_seconds"\].*"maximum":30/);
+  }
   await assert.rejects(p.request('tools/call', { name: 'absent', arguments: {} }).result, /未知工具/);
   p.child.stdin.end(); assert.equal((await p.closed)[0], 0); assert.equal(p.diagnostics(), '');
 });

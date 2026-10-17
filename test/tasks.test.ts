@@ -17,30 +17,26 @@ test('异步命令及时返回，运行中读取输出，结果保留退出失�
     const response = await p.request('tools/call', { name, arguments: args }).result;
     assert.equal(response.isError, false, JSON.stringify(response)); return response.structuredContent!;
   };
-  const finish = async (task_id: unknown) => {
-    for (let attempt = 0; attempt < 100; attempt++) {
-      const snapshot = await call('ssh_task_status', { task_id });
-      if (snapshot.result) return snapshot;
-      await delay(20);
-    }
-    assert.fail('任务未结束');
-  };
+  const finish = (task_id: unknown) => call('ssh_task_status', { task_id, wait_seconds: 5 });
   const task = await call('ssh_exec_start', { server_id: 'test', command: 'hang' });
   assert.equal(typeof task.task_id, 'string'); assert.equal(task.result, undefined);
-  let text = '';
-  for (let attempt = 0; attempt < 100 && !text; attempt++) {
-    const page = await call('ssh_output', { output_id: task.output_id });
-    assert.equal(page.finished, false); text = String(page.text); if (!text) await delay(20);
-  }
-  assert.equal(text, 'partial');
+  const page = await call('ssh_output', { output_id: task.output_id, wait_seconds: 5 });
+  assert.equal(page.finished, false); assert.equal(page.text, 'partial');
+  const listed = await call('ssh_task_list', {});
+  assert.deepEqual(listed.tasks, [await call('ssh_task_status', { task_id: task.task_id })]);
+  assert(!JSON.stringify(listed).includes('partial')); assert(!JSON.stringify(listed).includes('hang'));
   const activeForget = await p.request('tools/call', { name: 'ssh_output_forget', arguments: { output_id: task.output_id } }).result;
   assert.equal((activeForget.structuredContent?.error as { code: string }).code, 'ssh_output_active');
   const canceled = await call('ssh_task_cancel', { task_id: task.task_id }); assert.equal(canceled.cancel_requested, true);
   const final = await finish(task.task_id);
   assert.equal(final.status, 'canceled'); assert.equal((final.result as { error: { code: string } }).error.code, 'ssh_canceled');
   assert.equal((final.result as { stdout: string }).stdout, 'partial');
+  assert.equal(typeof final.expires_at, 'string');
+  const summaries = (await call('ssh_task_list', {})).tasks as Array<Record<string, unknown>>;
+  assert.equal(summaries[0]?.result, undefined); assert.equal(summaries[0]?.status, 'canceled');
   assert.equal((await call('ssh_task_cancel', { task_id: task.task_id })).status, 'canceled');
   assert.equal((await call('ssh_output_forget', { output_id: task.output_id })).forgotten, true);
+  assert.deepEqual((await call('ssh_task_list', {})).tasks, []);
   const forgotten = await p.request('tools/call', { name: 'ssh_task_status', arguments: { task_id: task.task_id } }).result;
   assert.equal((forgotten.structuredContent?.error as { code: string }).code, 'ssh_task_unknown');
   for (const command of ['ok', 'fail', 'missing']) {
@@ -64,11 +60,29 @@ test('异步任务总超时、过期与会话边界', async t => {
   const final = tasks.get(task.task_id);
   assert.equal(final.status, 'failed'); assert.equal(final.result?.error?.code, 'ssh_timeout');
   const other = new TaskStore(config, outputs, new AbortController().signal);
+  assert.deepEqual(other.list().tasks, []);
   assert.throws(() => other.get(task.task_id), { code: 'ssh_task_unknown' });
   now += OUTPUT_TTL_MS;
+  assert.deepEqual(tasks.list().tasks, []);
   assert.throws(() => tasks.get(task.task_id), { code: 'ssh_task_unknown' });
   assert.throws(() => outputs.read(task.output_id, 'stdout', 0, 256), { code: 'ssh_output_unknown' });
   root.abort(); assert.throws(() => tasks.start({ server_id: 'test', command: 'ok', timeout_seconds: 1 }), { code: 'ssh_canceled' });
+});
+
+test('等待任务到期或取消观察不会取消任务，会话结束会中断等待', async t => {
+  const s = await startSSH(t, { session: execSession });
+  const root = new AbortController(), outputs = new OutputStore();
+  const config = { servers: new Map([[s.config.id, s.config]]), knownHosts: join(s.root, 'known_hosts'), hostKeyPolicy: 'accept_new' as const };
+  const tasks = new TaskStore(config, outputs, root.signal);
+  const task = tasks.start({ server_id: 'test', command: 'hang', timeout_seconds: 5 });
+  const bounded = await tasks.wait(task.task_id, 0.02, root.signal);
+  assert.equal(bounded.result, undefined); assert.equal(bounded.cancel_requested, false);
+  const controller = new AbortController();
+  const canceled = tasks.wait(task.task_id, 1, controller.signal);
+  controller.abort(); await assert.rejects(canceled, { code: 'ssh_canceled' });
+  assert.equal(tasks.get(task.task_id).cancel_requested, false);
+  const waiting = tasks.wait(task.task_id, 1, root.signal);
+  root.abort(); await assert.rejects(waiting, { code: 'ssh_canceled' });
 });
 
 test('MCP EOF 关闭已返回句柄的异步命令连接', async t => {
