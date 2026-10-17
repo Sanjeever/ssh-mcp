@@ -94,12 +94,41 @@ test('MCP EOF 关闭已返回句柄的异步命令连接', async t => {
   const s = await startSSH(t, { session: execSession });
   const p = startCLI(t, { SSH_MCP_SERVER_TEST_HOST: s.config.host, SSH_MCP_SERVER_TEST_PORT: String(s.config.port), SSH_MCP_KNOWN_HOSTS: join(s.root, 'known_hosts') });
   await p.init();
-  await p.request('tools/call', { name: 'ssh_exec_start', arguments: { server_id: 'test', command: 'hang' } }).result;
+  const task = (await p.request('tools/call', { name: 'ssh_exec_start', arguments: { server_id: 'test', command: 'hang' } }).result).structuredContent!;
   for (let attempt = 0; !s.clients.size && attempt < 100; attempt++) await delay(10);
   assert(s.clients.size > 0);
+  const waiting = [
+    p.request('tools/call', { name: 'ssh_task_status', arguments: { task_id: task.task_id, wait_seconds: 30 } }),
+    p.request('tools/call', { name: 'ssh_output', arguments: { output_id: task.output_id, stream: 'stderr', wait_seconds: 30 } }),
+  ];
+  for (const request of waiting) request.result.catch(() => {});
   p.child.stdin.end(); assert.equal((await p.closed)[0], 0);
   for (let attempt = 0; s.clients.size && attempt < 100; attempt++) await delay(10);
   assert.equal(s.clients.size, 0);
+  assert.equal(p.diagnostics(), '');
+});
+
+test('stdio 取消任务及输出观察请求不取消原任务', { timeout: 10000 }, async t => {
+  const s = await startSSH(t, { session: execSession });
+  const p = startCLI(t, { SSH_MCP_SERVER_TEST_HOST: s.config.host, SSH_MCP_SERVER_TEST_PORT: String(s.config.port), SSH_MCP_KNOWN_HOSTS: join(s.root, 'known_hosts') });
+  await p.init();
+  const task = (await p.request('tools/call', { name: 'ssh_exec_start', arguments: { server_id: 'test', command: 'hang' } }).result).structuredContent!;
+  const page = await p.request('tools/call', { name: 'ssh_output', arguments: { output_id: task.output_id, wait_seconds: 3 } }).result;
+  assert.equal(page.structuredContent?.text, 'partial');
+  const waiting = [
+    p.request('tools/call', { name: 'ssh_task_status', arguments: { task_id: task.task_id, wait_seconds: 30 } }),
+    p.request('tools/call', { name: 'ssh_output', arguments: { output_id: task.output_id, offset: 7, wait_seconds: 30 } }),
+  ];
+  for (const request of waiting) request.result.catch(() => {});
+  await p.request('tools/call', { name: 'ssh_task_list', arguments: {} }).result;
+  for (const request of waiting) p.send({ method: 'notifications/cancelled', params: { requestId: request.id, reason: '取消观察' } });
+  const snapshot = await p.request('tools/call', { name: 'ssh_task_status', arguments: { task_id: task.task_id } }).result;
+  assert.equal(snapshot.structuredContent?.status, 'running'); assert.equal(snapshot.structuredContent?.cancel_requested, false);
+  assert(s.clients.size > 0);
+  await p.request('tools/call', { name: 'ssh_task_cancel', arguments: { task_id: task.task_id } }).result;
+  const final = await p.request('tools/call', { name: 'ssh_task_status', arguments: { task_id: task.task_id, wait_seconds: 3 } }).result;
+  assert.equal(final.structuredContent?.status, 'canceled');
+  p.child.stdin.end(); assert.equal((await p.closed)[0], 0); assert.equal(p.diagnostics(), '');
 });
 
 test('任务容量满时提示查询与释放，释放已结束任务后可立即启动', async t => {

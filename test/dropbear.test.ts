@@ -20,18 +20,19 @@ for (const sftp of [false, true]) test(`独立 Dropbear / BusyBox：${sftp ? 'SF
   assert.equal(capabilities.isError, false); assert.equal(capabilities.structuredContent?.ssh, true);
   const info = capabilities.structuredContent?.sftp as { available: boolean; atomic_overwrite?: boolean; atomic_no_overwrite?: boolean };
   assert.equal(info.available, sftp);
-  const source = join(s.root, 'source'); writeFileSync(source, 'name=old\n');
+  const source = join(s.root, 'source'); writeFileSync(source, 'name=old\nport=22\n');
   const uploaded = await call('ssh_upload', { local_path: source, remote_path: '/tmp/config', atomic: true });
   if (sftp) {
     assert.equal(info.atomic_overwrite, true); assert.equal(info.atomic_no_overwrite, true);
     assert.equal(uploaded.isError, false); assert.equal(uploaded.structuredContent?.publication_state, 'published');
     const read = await call('ssh_read_file', { remote_path: '/tmp/config' });
-    assert.equal(read.isError, false); assert.equal(read.structuredContent?.content, 'name=old\n');
-    const edited = await call('ssh_edit_file', { remote_path: '/tmp/config', old_text: 'old', new_text: 'new', expected_revision: read.structuredContent?.revision });
+    assert.equal(read.isError, false); assert.equal(read.structuredContent?.content, 'name=old\nport=22\n');
+    const edited = await call('ssh_edit_file', { remote_path: '/tmp/config', edits: [{ old_text: 'old', new_text: 'new' }, { old_text: 'port=22', new_text: 'port=2222' }], expected_revision: read.structuredContent?.revision });
     assert.equal(edited.isError, false); assert.equal(edited.structuredContent?.publication_state, 'published');
+    assert.equal(edited.structuredContent?.replacements, 2);
     const target = join(s.root, 'download');
     assert.equal((await call('ssh_download', { remote_path: '/tmp/config', local_path: target })).isError, false);
-    assert.equal(readFileSync(target, 'utf8'), 'name=new\n');
+    assert.equal(readFileSync(target, 'utf8'), 'name=new\nport=2222\n');
   } else {
     assert.equal(uploaded.isError, true); assert.equal(uploaded.structuredContent?.publication_state, 'not_published');
     const command = await call('ssh_exec', { command: "printf 'still usable\\n'" });
