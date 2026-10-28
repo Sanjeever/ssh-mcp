@@ -1,6 +1,7 @@
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { CallToolRequestSchema, ListToolsRequestSchema, McpError, ErrorCode } from '@modelcontextprotocol/sdk/types.js';
-import { z } from 'zod';
+// 命名空间导入让 esbuild 裁掉未使用的 Zod 导出与语言包。
+import * as z from 'zod';
 import type { Config } from './config.js';
 import { SSHError, operationSignal, operationError, interrupted } from './errors.js';
 import type { OperationContext } from './errors.js';

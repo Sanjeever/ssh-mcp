@@ -39,6 +39,7 @@ export async function build() {
     format: 'esm',
     target: 'node22',
     minify: true,
+    charset: 'utf8',
     legalComments: 'eof',
     metafile: true,
     banner: { js: 'import { createRequire as _createRequire } from "node:module"; import { fileURLToPath as _fileURLToPath } from "node:url"; import { dirname as _dirname } from "node:path"; const require = _createRequire(import.meta.url); const __filename = _fileURLToPath(import.meta.url); const __dirname = _dirname(__filename);' },

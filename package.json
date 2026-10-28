@@ -1,6 +1,6 @@
 {
   "name": "@sanjeever/ssh-mcp",
-  "version": "0.4.2",
+  "version": "0.4.3",
   "description": "通过 stdio MCP 管理多台 SSH 服务器，执行命令并传输文件",
   "license": "MIT",
   "type": "module",
