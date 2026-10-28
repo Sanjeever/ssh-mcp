@@ -1,7 +1,8 @@
-import { statSync } from 'node:fs';
+import { readFileSync, statSync } from 'node:fs';
 import { isIP } from 'node:net';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { parseEnv } from 'node:util';
 import { DEFAULT_CONCURRENCY } from './scheduler.js';
 import type { Concurrency } from './scheduler.js';
 
@@ -32,7 +33,14 @@ export function resolvePath(value: string): string {
   return resolve(value);
 }
 
-export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
+export function loadConfig(env: NodeJS.ProcessEnv = process.env, envFile?: string): Config {
+  if (envFile !== undefined) {
+    let content: string;
+    try { content = readFileSync(resolvePath(envFile), 'utf8'); }
+    catch { throw new Error('无法读取 --env-file 指定的文件，请检查路径和读取权限'); }
+    // 显式环境变量优先；解析结果仅供配置读取，不写入进程环境。
+    env = { ...parseEnv(content), ...Object.fromEntries(Object.entries(env).filter(([, value]) => value !== undefined)) };
+  }
   const fields = ['PRIVATE_KEY_PATH', 'AGENT_SOCKET', 'JUMP_SERVER_ID', 'DESCRIPTION', 'PASSPHRASE', 'USERNAME', 'PASSWORD', 'HOST', 'PORT'];
   const groups = new Map<string, Record<string, string>>();
   for (const [name, value] of Object.entries(env)) {

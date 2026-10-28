@@ -27,6 +27,8 @@
 
 将示例地址和凭据换成实际值。需要固定版本时，在包名后追加 `@<version>`。配置在启动时加载，修改后须重启 MCP 进程。启动和 `ssh_list` 不逐台联网；远端操作使用列表返回的精确 `server_id`。
 
+多个客户端可共用一份 `.env` 文件，将 `args` 改为 `["-y", "@sanjeever/ssh-mcp", "--env-file", "/absolute/path/servers.env"]`，并移除客户端中重复的 `env` 配置。文件沿用现有 `SSH_MCP_*` 变量名，同名进程环境变量优先。文件示例、Codex 与 Claude Code 配置及迁移步骤见[共享环境文件](https://github.com/Sanjeever/ssh-mcp/blob/main/docs/usage.md#共享环境文件)。
+
 默认首次连接自动信任主机密钥并写入 known_hosts，首次连接没有外部身份核对。需要预先建立信任时，设置 `SSH_MCP_HOST_KEY_POLICY=strict` 并通过可信方式录入服务器密钥。私钥、SSH Agent、单跳跳板机、多服务器配置及主机证书限制见[使用指南](https://github.com/Sanjeever/ssh-mcp/blob/main/docs/usage.md)。
 
 命令在独立连接或单跳连接链中执行，支持标准输入及输出头尾保留，无 PTY、无持续 Shell。传输支持单个普通文件，默认禁止覆盖，可显式启用原子上传；支持有限并发与客户端请求的进度通知。超时、取消或连接中断后远端状态可能不确定，程序不自动重试命令。完整参数、限制和错误语义见[工具说明](https://github.com/Sanjeever/ssh-mcp/blob/main/docs/usage.md#工具调用)。

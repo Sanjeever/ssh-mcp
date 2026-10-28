@@ -42,6 +42,35 @@ test('非法配置拒绝启动且不泄露凭据', () => {
   assert.throws(() => loadConfig({}), /至少/);
 });
 
+test('环境文件支持多服务器、引号和注释，进程环境优先且不被修改', t => {
+  const dir = mkdtempSync(join(tmpdir(), 'ssh-env-')); t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const file = join(dir, 'servers.env');
+  writeFileSync(file, `# 共享配置\nSSH_MCP_SERVER_DEV_HOST=localhost\nSSH_MCP_SERVER_DEV_USERNAME=deploy\nSSH_MCP_SERVER_DEV_PASSWORD=' secret # = $LITERAL '\nSSH_MCP_SERVER_DEV_DESCRIPTION=开发环境 # 注释\nSSH_MCP_SERVER_PROD_HOST=192.0.2.10\nSSH_MCP_SERVER_PROD_USERNAME=operator\nSSH_MCP_SERVER_PROD_PASSWORD=prod-secret\nSSH_MCP_HOST_KEY_POLICY=strict\nSSH_MCP_MAX_CONCURRENT=8\nNODE_OPTIONS=--invalid-option\n`);
+  const env = { SSH_MCP_SERVER_DEV_HOST: '::1', SSH_MCP_SERVER_DEV_PASSWORD: undefined };
+  const before = JSON.stringify(process.env);
+  const config = loadConfig(env, file);
+  assert.deepEqual([...config.servers.keys()], ['dev', 'prod']);
+  assert.equal(config.servers.get('dev')?.host, '::1');
+  assert.equal(config.servers.get('dev')?.password, ' secret # = $LITERAL ');
+  assert.equal(config.servers.get('dev')?.description, '开发环境');
+  assert.equal(config.hostKeyPolicy, 'strict');
+  assert.equal(config.concurrency?.global, 8);
+  assert.deepEqual(env, { SSH_MCP_SERVER_DEV_HOST: '::1', SSH_MCP_SERVER_DEV_PASSWORD: undefined });
+  assert.equal(JSON.stringify(process.env) === before, true, '加载文件不得修改进程环境');
+  assert.throws(() => loadConfig({ SSH_MCP_SERVER_DEV_PASSWORD: '' }, file), /不能为空/);
+});
+
+test('环境文件读取失败和非法配置阻止启动且不泄露凭据', t => {
+  const dir = mkdtempSync(join(tmpdir(), 'ssh-env-errors-')); t.after(() => rmSync(dir, { recursive: true, force: true }));
+  assert.throws(() => loadConfig(base, join(dir, 'secret-missing.env')), error => error instanceof Error && /无法读取/.test(error.message) && !error.message.includes('secret'));
+  assert.throws(() => loadConfig(base, dir), /无法读取/);
+  const file = join(dir, 'servers.env');
+  writeFileSync(file, 'SSH_MCP_SERVER_DEV_HOST=localhost\nSSH_MCP_SERVER_DEV_USERNAME=deploy\nSSH_MCP_SERVER_DEV_PASSWORD=secret\nSSH_MCP_SERVER_DEV_PORT=secret\n');
+  assert.throws(() => loadConfig({}, file), error => error instanceof Error && /PORT/.test(error.message) && !error.message.includes('secret'));
+  writeFileSync(file, '# 空配置\n');
+  assert.throws(() => loadConfig({}, file), /至少/);
+});
+
 test('调用并发和排队容量有界，非法限额拒绝启动', () => {
   assert.deepEqual(loadConfig(base).concurrency, { global: 4, perServer: 2, queue: 32 });
   assert.deepEqual(loadConfig({ ...base, SSH_MCP_MAX_CONCURRENT: '8', SSH_MCP_MAX_CONCURRENT_PER_SERVER: '3', SSH_MCP_MAX_QUEUE: '0' }).concurrency, { global: 8, perServer: 3, queue: 0 });

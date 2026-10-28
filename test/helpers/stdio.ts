@@ -14,10 +14,10 @@ export const toolNames = ['ssh_download', 'ssh_edit_file', 'ssh_exec', 'ssh_exec
 interface Request<T> { id: number; result: Promise<T> }
 const responseSchemas = { initialize: InitializeResultSchema, 'tools/list': ListToolsResultSchema, 'tools/call': CallToolResultSchema };
 
-export function startCLI(t: Pick<TestContext, 'after'>, extraEnv: NodeJS.ProcessEnv = {}) {
+export function startCLI(t: Pick<TestContext, 'after'>, extraEnv: NodeJS.ProcessEnv = {}, args: string[] = []) {
   const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('SSH_MCP_')));
   Object.assign(env, { SSH_MCP_SERVER_TEST_HOST: '192.0.2.1', SSH_MCP_SERVER_TEST_USERNAME: 'operator', SSH_MCP_SERVER_TEST_PASSWORD: ' secret ' }, extraEnv);
-  const child = spawn(process.execPath, ['dist/cli.js'], { env, stdio: ['pipe', 'pipe', 'pipe'] });
+  const child = spawn(process.execPath, ['dist/cli.js', ...args], { env, stdio: ['pipe', 'pipe', 'pipe'] });
   t.after(() => child.kill());
   let buffer = '', stderr = '', nextID = 0;
   const pending = new Map<number, { resolve: (value: unknown) => void; reject: (error: Error) => void; timer: NodeJS.Timeout }>();

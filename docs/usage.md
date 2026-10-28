@@ -18,7 +18,7 @@
 | `JUMP_SERVER_ID` | 可选，已配置跳板服务器的精确小写 ID，仅支持单跳 |
 | `DESCRIPTION` | 可选，用于识别服务器用途 |
 
-在 README 示例的 `env` 中继续添加其他 ID 即可配置多台服务器。例如使用已有加密私钥的服务器：
+在客户端的 `env` 或[共享环境文件](#共享环境文件)中继续添加其他 ID 即可配置多台服务器。例如使用已有加密私钥的服务器：
 
 ```json
 {
@@ -39,7 +39,7 @@ Agent 认证设置 `SSH_MCP_SERVER_<ID>_AGENT_SOCKET`，并省略密码、私钥
 
 配置路径支持主目录展开，相对路径基于进程工作目录解析，不展开 `$VAR` 或命名用户主目录。工具传输路径规则见[文件传输](#文件传输)，与配置路径不同。
 
-配置在启动后固定，修改须重启进程。工具输入不接受凭据，列表与默认日志不返回凭据或私钥路径。密码与口令保存在客户端配置及进程环境中，客户端及同账号本地进程可能读取，程序不提供此边界上的凭据隔离。
+配置在启动后固定，修改须重启进程。工具输入不接受凭据，列表与默认日志不返回凭据或私钥路径。密码与口令可能保存在客户端配置、共享环境文件及进程内存或环境中，客户端及同账号本地进程可能读取，程序不提供此边界上的凭据隔离。
 
 远端操作共享调用并发限制，包括同步命令、异步任务、探测、文本读写与传输：
 
@@ -50,6 +50,53 @@ Agent 认证设置 `SSH_MCP_SERVER_<ID>_AGENT_SOCKET`，并省略密码、私钥
 | `SSH_MCP_MAX_QUEUE` | 32 | 0–256，等待队列容量，0 表示忙碌时直接拒绝 |
 
 队列满返回 `ssh_queue_full`。排队时间计入总超时，排队取消不会建立连接。按等待顺序启动具备配额的操作，忙碌主机不会阻塞有空闲配额的其他主机。全局按逻辑操作计数，单跳操作包含两条 SSH 连接；每服务器按配置 ID 计数，两个 ID 指向同一物理设备时不会自动合并。列表、输出读取和任务状态查询不占远端配额。
+
+### 共享环境文件
+
+使用多个 Agent 客户端时，可将 `SSH_MCP_*` 配置集中到一份本机文件，例如 `~/.config/ssh-mcp/servers.env`：
+
+```dotenv
+SSH_MCP_SERVER_DEV_HOST=192.0.2.10
+SSH_MCP_SERVER_DEV_USERNAME=deploy
+SSH_MCP_SERVER_DEV_PASSWORD='<dev-password>'
+SSH_MCP_SERVER_DEV_DESCRIPTION=开发环境
+
+SSH_MCP_SERVER_PROD_HOST=192.0.2.20
+SSH_MCP_SERVER_PROD_USERNAME=deploy
+SSH_MCP_SERVER_PROD_PRIVATE_KEY_PATH=~/.ssh/id_ed25519
+SSH_MCP_SERVER_PROD_DESCRIPTION=生产环境
+```
+
+文件使用 Node 原生 `.env` 格式。以 `#` 开始注释；密码含 `#` 或需要保留首尾空格时须加引号。值不会展开 `$VAR` 或执行 Shell 命令，Agent 端点仍须填写实际值。macOS/Linux 上含凭据的文件宜设置为 `0600`：
+
+```sh
+chmod 600 ~/.config/ssh-mcp/servers.env
+```
+
+在 Codex 的 `~/.codex/config.toml` 中配置：
+
+```toml
+[mcp_servers.ssh]
+command = "npx"
+args = ["-y", "@sanjeever/ssh-mcp", "--env-file", "/absolute/path/servers.env"]
+```
+
+在 Claude Code 的 `~/.claude.json` 中，将对应 `mcpServers.ssh` 条目设为：
+
+```json
+{
+  "command": "npx",
+  "args": ["-y", "@sanjeever/ssh-mcp", "--env-file", "/absolute/path/servers.env"]
+}
+```
+
+将 `/absolute/path/servers.env` 换成同一文件的绝对路径，并删除两个客户端中已迁入文件的 `SSH_MCP_*` 环境变量。以后修改共享文件，再分别重启各客户端中的 SSH MCP 进程。
+
+`--env-file <路径>` 与 `--env-file=<路径>` 均可，每次启动接受一份文件，不自动搜索。环境文件须使用绝对路径，避免客户端工作目录差异和 Node 提前读取时不展开 `~/` 的问题。文件内的私钥及 known_hosts 等配置路径沿用现有规则，相对路径仍基于进程工作目录，不改为相对于文件目录解析。
+
+同名进程环境变量优先于文件值，包括显式空值；不同变量合并后统一校验，原有认证互斥和跳板引用规则仍生效。不传参数时沿用原环境变量配置。文件不存在或不可读时停止启动，不回退到环境变量；错误信息不包含文件内容。
+
+Node 的部分版本会提前扫描脚本参数中的 `--env-file`，即使该参数位于包名或脚本路径之后，也可能先将文件值载入进程环境，或在应用启动前报告读取错误。文件应专用于 `SSH_MCP_*` 配置，不放入 `NODE_OPTIONS` 等运行时设置。应用配置加载器本身使用原生解析器，不执行 Shell，也不主动修改进程环境。
 
 ## 主机信任
 

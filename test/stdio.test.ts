@@ -1,7 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { z } from 'zod';
 import { startCLI, serversOutput } from './helpers/stdio.js';
 
 test('真实 stdio 初始化、列表、严格参数与 EOF', async t => {
@@ -37,4 +40,32 @@ test('版本与启动错误保持 stdout 隔离', () => {
   assert.equal(version.status, 0); assert.equal(version.stdout.trim(), JSON.parse(readFileSync('package.json', 'utf8')).version);
   const invalid = spawnSync(process.execPath, ['dist/cli.js'], { encoding: 'utf8', env: {} });
   assert.equal(invalid.status, 1); assert.equal(invalid.stdout, ''); assert.match(invalid.stderr, /至少/);
+});
+
+test('真实 stdio 从环境文件启动，支持两种参数写法和环境覆盖', async t => {
+  const dir = mkdtempSync(join(tmpdir(), 'ssh-stdio-env-')); t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const file = join(dir, 'servers with spaces.env');
+  writeFileSync(file, 'SSH_MCP_SERVER_TEST_HOST=192.0.2.2\nSSH_MCP_SERVER_TEST_USERNAME=file-user\nSSH_MCP_SERVER_TEST_PASSWORD=" file-secret # "\nSSH_MCP_SERVER_DEV_HOST=localhost\nSSH_MCP_SERVER_DEV_USERNAME=deploy\nSSH_MCP_SERVER_DEV_PASSWORD=dev-secret\n');
+  for (const args of [['--env-file', file], [`--env-file=${file}`]]) {
+    const p = startCLI(t, { SSH_MCP_SERVER_TEST_USERNAME: undefined, SSH_MCP_SERVER_TEST_PASSWORD: undefined }, args);
+    await p.init();
+    const list = await p.request('tools/call', { name: 'ssh_list', arguments: {} }).result;
+    const servers = serversOutput.extend({ servers: serversOutput.shape.servers.element.extend({ host: z.string(), username: z.string() }).array() }).parse(list.structuredContent).servers;
+    assert.deepEqual(servers.map(s => s.server_id), ['dev', 'test']);
+    assert.equal(servers[1]?.host, '192.0.2.1');
+    assert.equal(servers[1]?.username, 'file-user');
+    assert(!JSON.stringify(list).includes('secret'));
+    p.child.stdin.end(); assert.equal((await p.closed)[0], 0); assert.equal(p.diagnostics(), '');
+  }
+});
+
+test('环境文件参数及读取错误只写 stderr', t => {
+  const dir = mkdtempSync(join(tmpdir(), 'ssh-args-')); t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const file = join(dir, 'servers.env'); writeFileSync(file, '# 参数校验\n');
+  for (const args of [['--env-file'], ['--env-file='], ['--env-file', file, '--env-file', file], ['--version', '--env-file', file], ['--unknown'], ['--env-file', join(dir, 'missing.env')]]) {
+    const result = spawnSync(process.execPath, ['dist/cli.js', ...args], { encoding: 'utf8', env: {} });
+    // Node 部分版本会在脚本运行前读取 --env-file，缺失文件由运行时直接报错。
+    assert.notEqual(result.status, 0); assert.equal(result.stdout, '');
+    assert.match(result.stderr, /用法|无法读取|not found/);
+  }
 });

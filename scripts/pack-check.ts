@@ -65,9 +65,13 @@ export async function checkPack(tarball?: string) {
       ];
       assert.equal(await smoke(process.execPath, [join(installed, 'dist/cli.js')], env, install, calls), pkg.version);
       assert.equal(readFileSync(target, 'utf8'), readFileSync(source, 'utf8'));
+      const envFile = join(install, 'servers.env');
+      writeFileSync(envFile, `SSH_MCP_SERVER_SMOKE_HOST=${ssh.config.host}\nSSH_MCP_SERVER_SMOKE_PORT=${ssh.config.port}\nSSH_MCP_SERVER_SMOKE_USERNAME=${ssh.config.username}\nSSH_MCP_SERVER_SMOKE_PASSWORD=' secret '\n`);
+      const fileEnv = Object.fromEntries(Object.entries(env).filter(([key]) => !key.startsWith('SSH_MCP_SERVER_')));
+      assert.equal(await smoke(process.execPath, [join(installed, 'dist/cli.js'), '--env-file', envFile], fileEnv, install, [calls[0]!, calls[1]!]), pkg.version);
       const agentEnv = { ...env, SSH_MCP_SERVER_SMOKE_PASSWORD: undefined, SSH_MCP_SERVER_SMOKE_AGENT_SOCKET: agent.endpoint, SSH_MCP_SERVER_SMOKE_JUMP_SERVER_ID: 'gateway', SSH_MCP_SERVER_GATEWAY_HOST: gateway.config.host, SSH_MCP_SERVER_GATEWAY_PORT: String(gateway.config.port), SSH_MCP_SERVER_GATEWAY_USERNAME: gateway.config.username, SSH_MCP_SERVER_GATEWAY_PASSWORD: gateway.config.password };
       assert.equal(await smoke(process.execPath, [join(installed, 'dist/cli.js')], agentEnv, install, [calls[0]!, calls[1]!]), pkg.version);
-      console.log(`已验证 ${process.platform}-${process.arch} 隔离安装 ${index === 0 ? '正常安装' : flags.join(' ')}、CLI、全部工具、标准输入、Agent 与跳板机`);
+      console.log(`已验证 ${process.platform}-${process.arch} 隔离安装 ${index === 0 ? '正常安装' : flags.join(' ')}、CLI、环境文件、全部工具、标准输入、Agent 与跳板机`);
     }
     return entry.info;
   } finally { for (const close of cleanup) await close(); rmSync(temp, { recursive: true, force: true }); }
